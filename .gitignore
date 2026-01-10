@@ -4,6 +4,11 @@ build/
 *.so
 *.a
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # Editor files
 *.swp
 *~
