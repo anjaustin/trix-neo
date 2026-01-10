@@ -22,11 +22,6 @@ python viz/viz_trace.py add 1 1 0
 
 # 8-bit ripple carry adder
 python viz/viz_trace.py ripple 42 13
-
-# 6502 ALU operations
-python viz/viz_trace.py alu ADC 42 13
-python viz/viz_trace.py alu EOR 0x55 0xFF
-python viz/viz_trace.py alu ASL 0x80
 ```
 
 ---
@@ -67,21 +62,6 @@ Every visualization shows four frames:
 | `add` | Full adder (1-bit) | `viz_trace.py add 1 1 0` |
 | `ripple` | 8-bit ripple adder | `viz_trace.py ripple 42 13` |
 
-### 6502 ALU
-| Op | Shape | Example |
-|----|-------|---------|
-| `ADC` | RIPPLE_ADD | `viz_trace.py alu ADC 42 13` |
-| `SBC` | RIPPLE_SUB | `viz_trace.py alu SBC 50 20` |
-| `AND` | PARALLEL_AND | `viz_trace.py alu AND 0xFF 0x0F` |
-| `ORA` | PARALLEL_OR | `viz_trace.py alu ORA 0xAA 0x55` |
-| `EOR` | PARALLEL_XOR | `viz_trace.py alu EOR 0x55 0xFF` |
-| `ASL` | SHIFT_LEFT | `viz_trace.py alu ASL 0x80` |
-| `LSR` | SHIFT_RIGHT | `viz_trace.py alu LSR 0x02` |
-| `ROL` | ROTATE_LEFT | `viz_trace.py alu ROL 0x80 0 1` |
-| `ROR` | ROTATE_RIGHT | `viz_trace.py alu ROR 0x01 0 1` |
-| `INC` | INCREMENT | `viz_trace.py alu INC 0xFF` |
-| `DEC` | DECREMENT | `viz_trace.py alu DEC 0x00` |
-
 ---
 
 ## Options
@@ -101,6 +81,18 @@ Traditional neural networks are black boxes. You feed in data, magic happens, an
 TriX is a glass box. Every computation is a frozen polynomial. Every step is visible.
 
 This visualization doesn't explain TriX - it IS TriX, made visible.
+
+---
+
+## Proof of Concept Demos
+
+For application-specific demos (like the 6502 ALU), see `proofs/`:
+
+```bash
+# 6502 ALU visualization (demo, not core TriX)
+python proofs/6502/viz_6502.py ADC 42 13
+python proofs/6502/viz_6502.py EOR 0x55 0xFF
+```
 
 ---
 

@@ -9,7 +9,6 @@
  * Tests:
  *   - Logic shapes: Complete truth tables + mathematical invariants
  *   - Arithmetic: Exhaustive 8-bit tests where feasible
- *   - 6502 ALU: Known test vectors from real hardware
  *   - ONNX shapes: Numerical accuracy vs analytical solutions
  *   - Precision: Edge cases, denormals, overflow/underflow
  *   - Sparse Octave: Multi-scale lookup correctness
@@ -24,7 +23,6 @@
 
 #include <trixc/apu.h>
 #include <trixc/shapes.h>
-#include <trixc/alu6502.h>
 #include <trixc/onnx_shapes.h>
 
 /* Note: sparse_octave.h and providence.h have conflicting definitions.
@@ -273,114 +271,7 @@ void test_ripple_add_exhaustive(void) {
 }
 
 /* ============================================================================
- * SECTION 5: 6502 ALU - Known Test Vectors
- * ============================================================================ */
-
-void test_alu_known_vectors(void) {
-    SECTION("6502 ALU - Known Hardware Test Vectors");
-
-    trix_alu6502_t alu;
-    trix_alu6502_init(&alu);
-    int c_out;
-    uint8_t result;
-
-    /* ADC Tests (from real 6502 behavior) */
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0x00, 0x00, 0, &c_out);
-    TEST(result == 0x00 && c_out == 0, "ADC: 0x00 + 0x00 = 0x00, C=0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0xFF, 0x01, 0, &c_out);
-    TEST(result == 0x00 && c_out == 1, "ADC: 0xFF + 0x01 = 0x00, C=1 (overflow)");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0x50, 0x50, 0, &c_out);
-    TEST(result == 0xA0, "ADC: 0x50 + 0x50 = 0xA0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0x80, 0x80, 0, &c_out);
-    TEST(result == 0x00 && c_out == 1, "ADC: 0x80 + 0x80 = 0x00, C=1");
-
-    /* ADC with carry in */
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0x00, 0x00, 1, &c_out);
-    TEST(result == 0x01, "ADC: 0x00 + 0x00 + C=1 = 0x01");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ADC, 0xFF, 0x00, 1, &c_out);
-    TEST(result == 0x00 && c_out == 1, "ADC: 0xFF + 0x00 + C=1 = 0x00, C=1");
-
-    /* SBC Tests (A - M - !C) */
-    result = trix_alu6502_execute_int(&alu, ALU_SBC, 0x50, 0x30, 0, &c_out);
-    TEST(result == 0x20, "SBC: 0x50 - 0x30 = 0x20");
-
-    result = trix_alu6502_execute_int(&alu, ALU_SBC, 0x00, 0x01, 0, &c_out);
-    TEST(result == 0xFF, "SBC: 0x00 - 0x01 = 0xFF (underflow)");
-
-    result = trix_alu6502_execute_int(&alu, ALU_SBC, 0x80, 0x01, 0, &c_out);
-    TEST(result == 0x7F, "SBC: 0x80 - 0x01 = 0x7F");
-
-    /* Logical operations */
-    result = trix_alu6502_execute_int(&alu, ALU_AND, 0xAA, 0x55, 0, &c_out);
-    TEST(result == 0x00, "AND: 0xAA & 0x55 = 0x00 (alternating)");
-
-    result = trix_alu6502_execute_int(&alu, ALU_AND, 0xFF, 0x0F, 0, &c_out);
-    TEST(result == 0x0F, "AND: 0xFF & 0x0F = 0x0F");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ORA, 0xAA, 0x55, 0, &c_out);
-    TEST(result == 0xFF, "ORA: 0xAA | 0x55 = 0xFF");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ORA, 0xF0, 0x0F, 0, &c_out);
-    TEST(result == 0xFF, "ORA: 0xF0 | 0x0F = 0xFF");
-
-    result = trix_alu6502_execute_int(&alu, ALU_EOR, 0xAA, 0xFF, 0, &c_out);
-    TEST(result == 0x55, "EOR: 0xAA ^ 0xFF = 0x55");
-
-    result = trix_alu6502_execute_int(&alu, ALU_EOR, 0x55, 0x55, 0, &c_out);
-    TEST(result == 0x00, "EOR: 0x55 ^ 0x55 = 0x00");
-
-    /* Shift operations */
-    result = trix_alu6502_execute_int(&alu, ALU_ASL, 0x01, 0, 0, &c_out);
-    TEST(result == 0x02 && c_out == 0, "ASL: 0x01 << 1 = 0x02, C=0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ASL, 0x80, 0, 0, &c_out);
-    TEST(result == 0x00 && c_out == 1, "ASL: 0x80 << 1 = 0x00, C=1");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ASL, 0xAA, 0, 0, &c_out);
-    TEST(result == 0x54 && c_out == 1, "ASL: 0xAA << 1 = 0x54, C=1");
-
-    result = trix_alu6502_execute_int(&alu, ALU_LSR, 0x02, 0, 0, &c_out);
-    TEST(result == 0x01 && c_out == 0, "LSR: 0x02 >> 1 = 0x01, C=0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_LSR, 0x01, 0, 0, &c_out);
-    TEST(result == 0x00 && c_out == 1, "LSR: 0x01 >> 1 = 0x00, C=1");
-
-    result = trix_alu6502_execute_int(&alu, ALU_LSR, 0xAA, 0, 0, &c_out);
-    TEST(result == 0x55 && c_out == 0, "LSR: 0xAA >> 1 = 0x55, C=0");
-
-    /* Rotate operations */
-    result = trix_alu6502_execute_int(&alu, ALU_ROL, 0x55, 0, 0, &c_out);
-    TEST(result == 0xAA && c_out == 0, "ROL: 0x55 rotate left = 0xAA, C=0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ROL, 0x80, 0, 1, &c_out);
-    TEST(result == 0x01 && c_out == 1, "ROL: 0x80 with C=1 = 0x01, C=1");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ROR, 0xAA, 0, 0, &c_out);
-    TEST(result == 0x55 && c_out == 0, "ROR: 0xAA rotate right = 0x55, C=0");
-
-    result = trix_alu6502_execute_int(&alu, ALU_ROR, 0x01, 0, 1, &c_out);
-    TEST(result == 0x80 && c_out == 1, "ROR: 0x01 with C=1 = 0x80, C=1");
-
-    /* Increment/Decrement */
-    result = trix_alu6502_execute_int(&alu, ALU_INC, 0x00, 0, 0, &c_out);
-    TEST(result == 0x01, "INC: 0x00 + 1 = 0x01");
-
-    result = trix_alu6502_execute_int(&alu, ALU_INC, 0xFF, 0, 0, &c_out);
-    TEST(result == 0x00, "INC: 0xFF + 1 = 0x00 (wrap)");
-
-    result = trix_alu6502_execute_int(&alu, ALU_DEC, 0x01, 0, 0, &c_out);
-    TEST(result == 0x00, "DEC: 0x01 - 1 = 0x00");
-
-    result = trix_alu6502_execute_int(&alu, ALU_DEC, 0x00, 0, 0, &c_out);
-    TEST(result == 0xFF, "DEC: 0x00 - 1 = 0xFF (wrap)");
-}
-
-/* ============================================================================
- * SECTION 6: ONNX SHAPES - Numerical Accuracy
+ * SECTION 5: ONNX SHAPES - Numerical Accuracy
  * ============================================================================ */
 
 void test_onnx_activations(void) {
@@ -582,7 +473,7 @@ void test_onnx_layer_norm(void) {
 }
 
 /* ============================================================================
- * SECTION 7: PRECISION CONVERSIONS - Edge Cases
+ * SECTION 6: PRECISION CONVERSIONS - Edge Cases
  * ============================================================================ */
 
 void test_precision_edge_cases(void) {
@@ -641,7 +532,7 @@ void test_precision_edge_cases(void) {
 }
 
 /* ============================================================================
- * SECTION 8: HAMMING DISTANCE
+ * SECTION 7: HAMMING DISTANCE
  * ============================================================================ */
 
 void test_hamming_distance(void) {
@@ -681,7 +572,7 @@ void test_hamming_distance(void) {
 }
 
 /* ============================================================================
- * SECTION 9: SPARSE OCTAVE LOOKUP
+ * SECTION 8: SPARSE OCTAVE LOOKUP
  * ============================================================================ */
 
 void test_sparse_octave_basic(void) {
@@ -753,7 +644,7 @@ void test_sparse_octave_batch(void) {
 }
 
 /* ============================================================================
- * SECTION 10: PROVIDENCE (Content-Addressed Memory)
+ * SECTION 9: PROVIDENCE (Content-Addressed Memory)
  * ============================================================================ */
 
 void test_providence_basic(void) {
@@ -790,28 +681,38 @@ void test_providence_basic(void) {
 }
 
 /* ============================================================================
- * SECTION 11: STRESS TESTS
+ * SECTION 10: STRESS TESTS
  * ============================================================================ */
 
 void test_stress_ripple_adder(void) {
-    SECTION("Stress Test - 1 Million Additions");
-
-    trix_alu6502_t alu;
-    trix_alu6502_init(&alu);
+    SECTION("Stress Test - 1 Million Additions (Pure TriX Shapes)");
 
     int errors = 0;
-    int c_out;
 
     clock_t start = clock();
 
     for (int i = 0; i < 1000000; i++) {
-        uint8_t a = rand() & 0xFF;
-        uint8_t b = rand() & 0xFF;
-        int c_in = rand() & 1;
+        uint8_t a_val = rand() & 0xFF;
+        uint8_t b_val = rand() & 0xFF;
+        float c_in = (rand() & 1) ? 1.0f : 0.0f;
 
-        uint8_t result = trix_alu6502_execute_int(&alu, ALU_ADC, a, b, c_in, &c_out);
-        int expected = (a + b + c_in) & 0xFF;
+        /* Convert to bit arrays */
+        float a_bits[8], b_bits[8], result_bits[8];
+        for (int j = 0; j < 8; j++) {
+            a_bits[j] = (a_val >> j) & 1 ? 1.0f : 0.0f;
+            b_bits[j] = (b_val >> j) & 1 ? 1.0f : 0.0f;
+        }
 
+        float c_out;
+        trix_shape_ripple_add_8bit(a_bits, b_bits, c_in, result_bits, &c_out);
+
+        /* Convert result back to int */
+        int result = 0;
+        for (int j = 0; j < 8; j++) {
+            if (result_bits[j] > 0.5f) result |= (1 << j);
+        }
+
+        int expected = (a_val + b_val + (int)c_in) & 0xFF;
         if (result != expected) errors++;
     }
 
@@ -873,9 +774,6 @@ int main(int argc, char** argv) {
     /* Arithmetic */
     test_full_adder_exhaustive();
     test_ripple_add_exhaustive();
-
-    /* 6502 ALU */
-    test_alu_known_vectors();
 
     /* ONNX Shapes */
     test_onnx_activations();

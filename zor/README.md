@@ -24,9 +24,6 @@ Pure C implementation of TriX - ternary neural computation with frozen shapes.
 # Build everything
 make
 
-# Run the 6502 ALU demo
-make demo
-
 # Run the test suite
 make test
 ```
@@ -48,18 +45,6 @@ float xor(float a, float b) {
 
 ---
 
-## The Existence Proof
-
-A complete 6502 ALU in ~350 lines of C:
-- 16 frozen shapes
-- 0 learnable parameters
-- 100% accuracy
-- ~6 KB binary
-
-The same ALU that powered the Apple II.
-
----
-
 ## Project Structure
 
 ```
@@ -67,7 +52,6 @@ zor/
 ├── include/trixc/
 │   ├── apu.h           # Precision management, core logic shapes
 │   ├── shapes.h        # Full adder, ripple adder, Hamming distance
-│   ├── alu6502.h       # 6502 ALU implementation
 │   ├── onnx_shapes.h   # ONNX-compatible shapes (matmul, activations)
 │   ├── providence.h    # Content-addressed memory
 │   └── sparse_octave.h # Multi-scale sparse lookup
@@ -80,9 +64,6 @@ zor/
 │   ├── 05_matmul.c        # Matrix operations
 │   └── 06_tiny_mlp.c      # A complete neural network
 │
-├── experiments/
-│   └── frozen_6502_standalone.c  # Self-contained 6502 ALU
-│
 ├── test/
 │   └── test_rigorous.c    # 1,300+ tests
 │
@@ -91,26 +72,22 @@ zor/
 
 ---
 
-## The 16 Frozen Shapes
+## Core Frozen Shapes
 
-| ID | Shape | Operation |
-|----|-------|-----------|
-| 0 | XOR | `a + b - 2ab` |
-| 1 | AND | `a * b` |
-| 2 | OR | `a + b - ab` |
-| 3 | NOT | `1 - a` |
-| 4 | FULL_ADDER | Sum + Carry from 3 bits |
-| 5 | RIPPLE_ADD | 8-bit addition |
-| 6 | RIPPLE_SUB | 8-bit subtraction |
-| 7 | ASL | Arithmetic shift left |
-| 8 | LSR | Logical shift right |
-| 9 | ROL | Rotate left through carry |
-| 10 | ROR | Rotate right through carry |
-| 11 | INC | Increment |
-| 12 | DEC | Decrement |
-| 13 | HAMMING | XOR + popcount distance |
-| 14 | COMPARE | Soft comparison for routing |
-| 15 | IDENTITY | Pass-through |
+| Shape | Formula | Description |
+|-------|---------|-------------|
+| XOR | `a + b - 2ab` | Exclusive or |
+| AND | `a * b` | Logical and |
+| OR | `a + b - ab` | Logical or |
+| NOT | `1 - a` | Logical not |
+| NAND | `1 - ab` | Not-and |
+| NOR | `1 - a - b + ab` | Not-or |
+| XNOR | `1 - a - b + 2ab` | Exclusive nor |
+| FULL_ADDER | XOR + AND + OR | Sum + Carry from 3 bits |
+| RIPPLE_ADD | Chained full adders | N-bit addition |
+| HAMMING | XOR + popcount | Bit distance metric |
+
+These are the building blocks. Any deterministic computation can be composed from frozen shapes.
 
 ---
 
@@ -120,6 +97,16 @@ zor/
 2. **Routing is the only learning** - Which shape for which input
 3. **Precision is a shape** - FP4, FP8, FP16, FP32 conversions are frozen
 4. **No runtime** - Your model becomes a binary
+
+---
+
+## Proofs of Concept
+
+See `proofs/` for existence proofs demonstrating that frozen shapes can implement complete systems:
+
+- `proofs/6502/` - A complete 6502 ALU (16 shapes, 0 learnable params, 100% accuracy)
+
+These are demos, not core TriX.
 
 ---
 

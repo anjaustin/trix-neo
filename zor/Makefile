@@ -5,7 +5,6 @@
 # Usage:
 #   make            - Build all examples
 #   make test       - Run test suite
-#   make demo       - Run 6502 demo
 #   make clean      - Remove build artifacts
 
 CC = gcc
@@ -23,20 +22,14 @@ EXAMPLES = \
 	$(BUILD_DIR)/05_matmul \
 	$(BUILD_DIR)/06_tiny_mlp
 
-# Standalone demos
-DEMOS = \
-	$(BUILD_DIR)/frozen_6502
-
 # Tests
 TESTS = $(BUILD_DIR)/test_rigorous
 
-.PHONY: all examples demos test clean demo size
+.PHONY: all examples test clean size
 
-all: $(BUILD_DIR) examples demos
+all: $(BUILD_DIR) examples
 
 examples: $(BUILD_DIR) $(EXAMPLES)
-
-demos: $(BUILD_DIR) $(DEMOS)
 
 test: $(BUILD_DIR) $(TESTS)
 	./$(BUILD_DIR)/test_rigorous
@@ -63,17 +56,9 @@ $(BUILD_DIR)/05_matmul: examples/05_matmul.c
 $(BUILD_DIR)/06_tiny_mlp: examples/06_tiny_mlp.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-# Demos
-$(BUILD_DIR)/frozen_6502: experiments/frozen_6502_standalone.c
-	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
-
 # Test suite
 $(BUILD_DIR)/test_rigorous: test/test_rigorous.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
-
-# Run the 6502 demo
-demo: $(BUILD_DIR)/frozen_6502
-	./$(BUILD_DIR)/frozen_6502
 
 # Show binary sizes
 size: all

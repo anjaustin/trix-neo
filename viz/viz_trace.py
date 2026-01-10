@@ -2,8 +2,8 @@
 """
 TriX Visualization - Single-Step Trace
 
-Trace a single frozen shape operation step by step.
-The MVP of TriX visualization.
+Trace frozen shape operations step by step.
+Pure TriX - no application-specific code.
 
 Usage:
     python viz_trace.py xor 0 1
@@ -12,26 +12,19 @@ Usage:
     python viz_trace.py not 1
     python viz_trace.py add 1 1 0        # full adder: a, b, cin
     python viz_trace.py ripple 42 13     # 8-bit ripple add
-    python viz_trace.py alu ADC 42 13    # 6502 ALU operation
-    python viz_trace.py alu EOR 0x55 0xFF
-
-Options:
-    --auto      Auto-advance with animation
-    --instant   No pauses, just show final result
-    --step      Step-by-step (default)
 
 "If you can show it, there's no magic."
 """
 
 import sys
 import argparse
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from viz_core import (
-    Color, Box, Frame, ComputeStep,
-    print_lines, pause, animate_delay, clear_screen,
+    Color, Box, Frame,
+    print_lines, pause, animate_delay,
     fmt_float, fmt_binary, fmt_hex, fmt_result,
-    render_bits, render_computation,
+    render_bits,
 )
 
 
@@ -108,88 +101,6 @@ def frozen_ripple_add(a: int, b: int, cin: int = 0) -> Tuple[int, int, List[int]
 
 
 # ============================================================================
-# 6502 ALU
-# ============================================================================
-
-ALU_OPS = {
-    'ADC': 0,   # Add with carry
-    'SBC': 1,   # Subtract with borrow
-    'AND': 2,   # Bitwise AND
-    'ORA': 3,   # Bitwise OR
-    'EOR': 4,   # Exclusive OR
-    'ASL': 5,   # Arithmetic shift left
-    'LSR': 6,   # Logical shift right
-    'ROL': 7,   # Rotate left
-    'ROR': 8,   # Rotate right
-    'INC': 9,   # Increment
-    'DEC': 10,  # Decrement
-}
-
-SHAPE_NAMES = {
-    0: 'RIPPLE_ADD',
-    1: 'RIPPLE_SUB',
-    2: 'PARALLEL_AND',
-    3: 'PARALLEL_OR',
-    4: 'PARALLEL_XOR',
-    5: 'SHIFT_LEFT',
-    6: 'SHIFT_RIGHT',
-    7: 'ROTATE_LEFT',
-    8: 'ROTATE_RIGHT',
-    9: 'INCREMENT',
-    10: 'DECREMENT',
-}
-
-
-def alu_execute(op: str, a: int, b: int, cin: int = 0) -> Tuple[int, int, str]:
-    """Execute 6502 ALU operation. Returns (result, carry_out, shape_name)"""
-    op = op.upper()
-    if op not in ALU_OPS:
-        raise ValueError(f"Unknown ALU op: {op}")
-
-    op_id = ALU_OPS[op]
-    shape_name = SHAPE_NAMES[op_id]
-
-    if op == 'ADC':
-        result, cout, _ = frozen_ripple_add(a, b, cin)
-    elif op == 'SBC':
-        # SBC uses inverted carry (borrow)
-        result, cout, _ = frozen_ripple_add(a, b ^ 0xFF, 1 - cin)
-        cout = 1 - cout  # invert back
-    elif op == 'AND':
-        result = a & b
-        cout = 0
-    elif op == 'ORA':
-        result = a | b
-        cout = 0
-    elif op == 'EOR':
-        result = a ^ b
-        cout = 0
-    elif op == 'ASL':
-        cout = (a >> 7) & 1
-        result = (a << 1) & 0xFF
-    elif op == 'LSR':
-        cout = a & 1
-        result = a >> 1
-    elif op == 'ROL':
-        cout = (a >> 7) & 1
-        result = ((a << 1) | cin) & 0xFF
-    elif op == 'ROR':
-        cout = a & 1
-        result = (a >> 1) | (cin << 7)
-    elif op == 'INC':
-        result = (a + 1) & 0xFF
-        cout = 0
-    elif op == 'DEC':
-        result = (a - 1) & 0xFF
-        cout = 0
-    else:
-        result = a
-        cout = 0
-
-    return result, cout, shape_name
-
-
-# ============================================================================
 # TRACE VISUALIZATIONS
 # ============================================================================
 
@@ -200,18 +111,15 @@ def trace_xor(a: float, b: float, mode: str = 'step'):
 
     frame = Frame("TRACE: XOR", width=48)
 
-    # INPUT
     frame.add_section("INPUT", [
         f"  a = {Color.value(fmt_float(a))}",
         f"  b = {Color.value(fmt_float(b))}",
     ])
 
-    # FORMULA
     frame.add_section("FORMULA", [
         f"  XOR(a, b) = {Color.formula('a + b - 2·a·b')}",
     ])
 
-    # COMPUTE
     step1 = a + b
     step2 = 2.0 * a * b
     step3 = step1 - step2
@@ -226,7 +134,6 @@ def trace_xor(a: float, b: float, mode: str = 'step'):
         f"                     = {Color.value(fmt_float(step3))}",
     ])
 
-    # OUTPUT
     frame.add_section("OUTPUT", [
         f"  result = {fmt_result(result, expected)}",
         f"  binary = {Color.bit(result)}",
@@ -423,69 +330,6 @@ def trace_ripple(a: int, b: int, mode: str = 'step'):
     print()
 
 
-def trace_alu(op: str, a: int, b: int, cin: int = 0, mode: str = 'step'):
-    """Trace 6502 ALU operation."""
-    result, cout, shape_name = alu_execute(op, a, b, cin)
-
-    frame = Frame(f"TRACE: 6502 ALU - {op.upper()}", width=56)
-
-    frame.add_section("INPUT", [
-        f"  opcode  = {Color.value(op.upper())}",
-        f"  A       = {Color.value(fmt_hex(a))}  ({a})",
-        f"  operand = {Color.value(fmt_hex(b))}  ({b})" if op.upper() not in ['ASL', 'LSR', 'ROL', 'ROR', 'INC', 'DEC'] else f"  operand = (none)",
-        f"  carry   = {Color.value(str(cin))}",
-    ])
-
-    frame.add_section("ROUTE", [
-        f"  opcode {Color.dim('→')} shape: {Color.formula(shape_name)}",
-    ])
-
-    # Show operation-specific computation
-    if op.upper() in ['ADC', 'SBC']:
-        frame.add_section("COMPUTE", [
-            f"  8-bit ripple {'add' if op.upper() == 'ADC' else 'subtract'}",
-            f"  {a} {'+' if op.upper() == 'ADC' else '-'} {b} {'+' if op.upper() == 'ADC' else '-'} {cin}",
-        ])
-    elif op.upper() in ['AND', 'ORA', 'EOR']:
-        op_sym = {'AND': '&', 'ORA': '|', 'EOR': '^'}[op.upper()]
-        frame.add_section("COMPUTE", [
-            f"  a:      {fmt_binary(a)}",
-            f"  b:      {fmt_binary(b)}",
-            f"  {op_sym}       {'─' * 8}",
-            f"  result: {fmt_binary(result)}",
-        ])
-    elif op.upper() in ['ASL', 'LSR']:
-        direction = "left" if op.upper() == 'ASL' else "right"
-        frame.add_section("COMPUTE", [
-            f"  shift {direction}",
-            f"  before: {fmt_binary(a)}",
-            f"  after:  {fmt_binary(result)}  C={cout}",
-        ])
-    elif op.upper() in ['ROL', 'ROR']:
-        direction = "left" if op.upper() == 'ROL' else "right"
-        frame.add_section("COMPUTE", [
-            f"  rotate {direction} through carry",
-            f"  before: {fmt_binary(a)}  C={cin}",
-            f"  after:  {fmt_binary(result)}  C={cout}",
-        ])
-    elif op.upper() in ['INC', 'DEC']:
-        delta = "+1" if op.upper() == 'INC' else "-1"
-        frame.add_section("COMPUTE", [
-            f"  {a} {delta} = {result}",
-            f"  {fmt_binary(a)} → {fmt_binary(result)}",
-        ])
-
-    frame.add_section("OUTPUT", [
-        f"  result = {Color.value(fmt_hex(result))}  ({result})",
-        f"  carry  = {Color.value(str(cout))}",
-        f"  bits   = {fmt_binary(result)}",
-    ])
-
-    print()
-    frame.display()
-    print()
-
-
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -510,14 +354,13 @@ Examples:
     python viz_trace.py not 1
     python viz_trace.py add 1 1 0        # full adder
     python viz_trace.py ripple 42 13     # 8-bit ripple add
-    python viz_trace.py alu ADC 42 13    # 6502 ALU
-    python viz_trace.py alu EOR 0x55 0xFF
 
+Pure TriX frozen shapes. No application-specific code.
 "If you can show it, there's no magic."
 """
     )
 
-    parser.add_argument('operation', help='Operation: xor, and, or, not, add, ripple, alu')
+    parser.add_argument('operation', help='Operation: xor, and, or, not, add, ripple')
     parser.add_argument('args', nargs='*', help='Arguments for the operation')
     parser.add_argument('--auto', action='store_true', help='Auto-advance with animation')
     parser.add_argument('--instant', action='store_true', help='No pauses')
@@ -573,20 +416,9 @@ Examples:
             a, b = parse_value(op_args[0]), parse_value(op_args[1])
             trace_ripple(a, b, mode)
 
-        elif op == 'alu':
-            if len(op_args) < 2 or len(op_args) > 4:
-                print("Usage: viz_trace.py alu <OP> <a> [b] [carry]")
-                print("  OPs: ADC SBC AND ORA EOR ASL LSR ROL ROR INC DEC")
-                sys.exit(1)
-            alu_op = op_args[0].upper()
-            a = parse_value(op_args[1])
-            b = parse_value(op_args[2]) if len(op_args) > 2 else 0
-            cin = int(op_args[3]) if len(op_args) > 3 else 0
-            trace_alu(alu_op, a, b, cin, mode)
-
         else:
             print(f"Unknown operation: {op}")
-            print("Supported: xor, and, or, not, add, ripple, alu")
+            print("Supported: xor, and, or, not, add, ripple")
             sys.exit(1)
 
     except ValueError as e:
