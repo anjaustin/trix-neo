@@ -102,13 +102,14 @@ These are the building blocks. Any deterministic computation can be composed fro
 
 ## Documentation
 
-The theoretical foundations of TriX are documented in `docs/`:
+The theoretical foundations and engineering specifications are documented in `docs/`:
 
 | Document | Description |
 |----------|-------------|
 | [The 5 Primes](docs/THE_5_PRIMES.md) | The irreducible atoms: ADD, MUL, EXP, MAX, CONST |
 | [Periodic Table](docs/PERIODIC_TABLE.md) | Taxonomy of ~30 frozen shapes by function and complexity |
 | [Addressable Intelligence](docs/ADDRESSABLE_INTELLIGENCE.md) | The paradigm: data addresses computation |
+| [Engineering](docs/ENGINEERING.md) | Complete buildable specification: data structures, APIs, hardware |
 
 **Key insight:** All frozen shapes derive from the 5 Primes. NAND is not elemental — it's a compound of ADD, MUL, and CONST.
 
