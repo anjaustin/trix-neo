@@ -222,13 +222,22 @@ fuse-compile: $(BUILD_DIR)
 # ═══════════════════════════════════════════════════════════════
 
 NVCC = nvcc
-NVFLAGS = -O3 -gencode arch=compute_89,code=sm_89
+NVFLAGS = -O3 -arch=native
 
 $(BUILD_DIR)/cortex_bench: src/cortex.cu include/alpha_device.cuh
 	$(NVCC) $(NVFLAGS) src/cortex.cu -o $@
 
 $(BUILD_DIR)/visor: src/visor.cu include/alpha_device.cuh
 	$(NVCC) $(NVFLAGS) src/visor.cu -o $@ -lglfw -lGL -lGLEW -lX11
+
+$(BUILD_DIR)/visor_fb: src/visor_fallback.cu include/alpha_device.cuh
+	$(NVCC) $(NVFLAGS) src/visor_fallback.cu -o $@ -lglfw -lGL -lGLEW
+
+$(BUILD_DIR)/visor_bridge: src/visor_bridge.cu include/alpha_device.cuh
+	$(NVCC) $(NVFLAGS) src/visor_bridge.cu -o $@ -lglfw -lGL -lGLEW
+
+$(BUILD_DIR)/visor_reflex: src/visor_reflex.cu include/alpha_device.cuh
+	$(NVCC) $(NVFLAGS) src/visor_reflex.cu -o $@ -lglfw -lGL -lGLEW
 
 cortex: $(BUILD_DIR) $(BUILD_DIR)/cortex_bench
 	@echo ""

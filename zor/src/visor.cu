@@ -161,6 +161,22 @@ __global__ void liquid_update(LiquidLattice in, LiquidLattice out, float injecti
  *   4. Write pixel to screen buffer
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/* Simple test kernel - fills screen with gradient */
+__global__ void test_fill_kernel(uchar4* screen, int width, int height, int frame) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= width || y >= height) return;
+    int pixel_idx = y * width + x;
+
+    /* Animated gradient to prove rendering works */
+    unsigned char r = (unsigned char)((x + frame) % 256);
+    unsigned char g = (unsigned char)((y + frame) % 256);
+    unsigned char b = (unsigned char)(128);
+
+    screen[pixel_idx] = make_uchar4(r, g, b, 255);
+}
+
 __global__ void raymarch_kernel(
     uchar4* screen,
     float* volume,
@@ -223,6 +239,12 @@ __global__ void raymarch_kernel(
         int voxel_idx = (int)p.z * DIM * DIM + (int)p.y * DIM + (int)p.x;
         float val = volume[voxel_idx];
 
+        /* DEBUG: Show faint wireframe grid to verify raymarching works */
+        bool on_grid = (((int)p.x % 32) == 0) || (((int)p.y % 32) == 0) || (((int)p.z % 32) == 0);
+        if (on_grid && val < THRESH_CALM) {
+            val = 0.02f;  /* Faint grid lines */
+        }
+
         /* ─────────────────────────────────────────────────────────────────
          * 4. TRANSFER FUNCTION: "The Palette of Pain"
          *
@@ -280,11 +302,12 @@ __global__ void raymarch_kernel(
         t += RAY_STEP_SIZE;
     }
 
-    /* Background: Deep space blue-black */
+    /* Background: Dark blue gradient (visible for debugging) */
     float bg_alpha = 1.0f - color.w;
-    color.x += 0.02f * bg_alpha;
-    color.y += 0.02f * bg_alpha;
-    color.z += 0.05f * bg_alpha;
+    float gradient = (float)y / (float)height;
+    color.x += 0.05f * bg_alpha;
+    color.y += (0.05f + 0.1f * gradient) * bg_alpha;
+    color.z += (0.15f + 0.1f * gradient) * bg_alpha;
 
     /* ─────────────────────────────────────────────────────────────────────
      * 5. WRITE PIXEL
@@ -409,7 +432,12 @@ int main() {
         return 1;
     }
 
+    /* Set up viewport */
+    glViewport(0, 0, WIN_W, WIN_H);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
     printf("   OpenGL: %s\n", glGetString(GL_VERSION));
+    printf("   Renderer: %s\n", glGetString(GL_RENDERER));
     printf("   Window: %dx%d\n\n", WIN_W, WIN_H);
 
     /* ─────────────────────────────────────────────────────────────────────
@@ -435,17 +463,29 @@ int main() {
     /* ─────────────────────────────────────────────────────────────────────
      * 3. CREATE PIXEL BUFFER OBJECT (PBO) FOR CUDA-GL INTEROP
      * ───────────────────────────────────────────────────────────────────── */
-    printf(">> Setting up CUDA-GL interop...\n");
+    printf(">> Setting up render buffers (CPU fallback mode)...\n");
 
-    GLuint pbo;
-    glGenBuffers(1, &pbo);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER, WIN_W * WIN_H * 4, NULL, GL_DYNAMIC_DRAW);
+    /* Allocate CPU buffer for pixel data */
+    uchar4* h_screen = (uchar4*)malloc(WIN_W * WIN_H * sizeof(uchar4));
+    if (!h_screen) {
+        fprintf(stderr, "Failed to allocate CPU screen buffer\n");
+        return 1;
+    }
 
-    struct cudaGraphicsResource* cuda_pbo;
-    CUDA_CHECK(cudaGraphicsGLRegisterBuffer(&cuda_pbo, pbo, cudaGraphicsMapFlagsWriteDiscard));
+    /* Allocate GPU buffer for rendering */
+    uchar4* d_screen;
+    CUDA_CHECK(cudaMalloc(&d_screen, WIN_W * WIN_H * sizeof(uchar4)));
 
-    printf("   PBO registered for zero-copy rendering\n\n");
+    /* Create OpenGL texture for display */
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, WIN_W, WIN_H, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+    printf("   Using CPU copy fallback (CUDA-GL interop not available)\n");
+    printf("   Texture ID: %u\n\n", texture);
 
     /* ─────────────────────────────────────────────────────────────────────
      * 4. LAUNCH CONFIGURATION
@@ -495,12 +535,6 @@ int main() {
 
         /* ── RENDER PHASE ──────────────────────────────────────────────── */
 
-        /* Map PBO for CUDA access */
-        uchar4* dev_screen;
-        size_t size;
-        CUDA_CHECK(cudaGraphicsMapResources(1, &cuda_pbo, 0));
-        CUDA_CHECK(cudaGraphicsResourceGetMappedPointer((void**)&dev_screen, &size, cuda_pbo));
-
         /* Camera orbit */
         float angle = camera_angle + frame * 0.002f;
         float radius = 350.0f / camera_zoom;
@@ -514,9 +548,17 @@ int main() {
         /* Get current lattice (the one just written to) */
         LiquidLattice* current = (physics_step % 2 == 0) ? &gridA : &gridB;
 
+        /* DEBUG: Use test kernel first to verify pipeline */
+        #define DEBUG_TEST_PATTERN 1
+
+        #if DEBUG_TEST_PATTERN
+        test_fill_kernel<<<render_blocks, render_threads>>>(
+            d_screen, WIN_W, WIN_H, frame
+        );
+        #else
         /* Raymarch! */
         raymarch_kernel<<<render_blocks, render_threads>>>(
-            dev_screen,
+            d_screen,
             current->output,
             WIN_W,
             WIN_H,
@@ -524,28 +566,49 @@ int main() {
             cam_target,
             camera_zoom
         );
+        #endif
 
         CUDA_CHECK(cudaDeviceSynchronize());
-        CUDA_CHECK(cudaGraphicsUnmapResources(1, &cuda_pbo, 0));
+
+        /* Copy from GPU to CPU */
+        CUDA_CHECK(cudaMemcpy(h_screen, d_screen, WIN_W * WIN_H * sizeof(uchar4), cudaMemcpyDeviceToHost));
 
         /* ── DISPLAY PHASE ─────────────────────────────────────────────── */
         glClear(GL_COLOR_BUFFER_BIT);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
-        glDrawPixels(WIN_W, WIN_H, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+        /* Update texture with new frame */
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, WIN_W, WIN_H, GL_RGBA, GL_UNSIGNED_BYTE, h_screen);
+
+        /* Draw fullscreen quad with texture */
+        glEnable(GL_TEXTURE_2D);
+        glBegin(GL_QUADS);
+            glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
+            glTexCoord2f(1.0f, 0.0f); glVertex2f( 1.0f, -1.0f);
+            glTexCoord2f(1.0f, 1.0f); glVertex2f( 1.0f,  1.0f);
+            glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f,  1.0f);
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
 
-        /* FPS counter */
+        /* FPS counter + debug info */
         frame++;
         frame_count++;
         double current_time = glfwGetTime();
         if (current_time - last_time >= 1.0) {
-            char title[128];
+            /* Sample center voxel to verify physics is running */
+            float center_val = 0.0f;
+            int center_idx = (DIM/2) * DIM * DIM + (DIM/2) * DIM + (DIM/2);
+            cudaMemcpy(&center_val, &current->output[center_idx], sizeof(float), cudaMemcpyDeviceToHost);
+
+            char title[256];
             snprintf(title, sizeof(title),
-                     "ENTROMORPHIC VISOR | %d FPS | Physics: %d Hz",
-                     frame_count, frame_count * STEPS_PER_FRAME);
+                     "VISOR | %d FPS | Step %d | Center: %.4f",
+                     frame_count, physics_step, center_val);
             glfwSetWindowTitle(window, title);
+            printf("Frame %d: Center voxel = %.6f\n", frame, center_val);
             frame_count = 0;
             last_time = current_time;
         }
@@ -556,8 +619,9 @@ int main() {
      * ───────────────────────────────────────────────────────────────────── */
     printf("\n>> Shutdown\n");
 
-    CUDA_CHECK(cudaGraphicsUnregisterResource(cuda_pbo));
-    glDeleteBuffers(1, &pbo);
+    glDeleteTextures(1, &texture);
+    cudaFree(d_screen);
+    free(h_screen);
 
     free_lattice(&gridA);
     free_lattice(&gridB);
