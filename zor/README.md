@@ -52,6 +52,10 @@ The theoretical foundations are documented in [`docs/`](docs/):
 | [Soft Chips](docs/SOFT_CHIPS.md) | Portable frozen computation units |
 | [CfC + EntroMorph](docs/CFC_ENTROMORPH.md) | Liquid neural networks + evolution engine |
 | [Zit Detection](docs/ZIT_DETECTION.md) | **Anomaly detection via phase-locked tracking** |
+| [The Forge](docs/FORGE.md) | **Chip compiler: Data in, chip out** |
+| [Fuse Box](docs/FUSE_BOX.md) | **Universal chip validation harness** |
+| [HSOS](docs/HSOS.md) | **Hollywood Squares OS: Distributed semantic computation** |
+| [EntroMorphic OS](docs/ENTROMORPHIC_OS.md) | **Read-Only Nervous System: Real-time grid monitoring** |
 | [Architecture](docs/ARCHITECTURE.md) | Complete system architecture from theory to metal |
 
 ---
@@ -115,6 +119,7 @@ Run `make examples` then explore:
 | `06_tiny_mlp` | 2-layer perceptron |
 | `07_cfc_demo` | **CfC liquid neural network** |
 | `08_evolution_demo` | **EntroMorph evolution** |
+| `09_hsos_demo` | **Hollywood Squares OS: distributed sort + CSP** |
 
 ---
 
@@ -126,8 +131,10 @@ Run `make examples` then explore:
 | `shapes.h` | Logic shapes (XOR, AND, adders) |
 | `onnx_shapes.h` | ONNX ops (MatMul, Softmax, LayerNorm) |
 | `cfc_shapes.h` | **CfC cells and networks** |
+| `hsos.h` | **Hollywood Squares OS: distributed microkernel** |
 | `entromorph.h` | **Evolution engine** |
 | `shapefabric.h` | **Binary executable graphs** |
+| `alpha_device.cuh` | **CUDA liquid physics kernel** |
 
 ---
 
@@ -156,12 +163,44 @@ make genesis-sine      # Evolve a sine tracker
 make genesis-anomaly   # Evolve an anomaly detector
 
 # ─────────────────────────────────────────────────────
-# SENTINEL: Deploy anomaly detector daemon
+# THE FORGE: Data in, chip out (Product Layer)
 # ─────────────────────────────────────────────────────
-make sentinel
-./build/sentinel --cpu      # Monitor CPU load
-./build/sentinel --memory   # Monitor memory usage
-./build/sentinel --network  # Monitor network traffic
+make forge                          # Build the forge
+./build/forge train -i data.csv -o my_chip.h  # Train chip
+
+# Validate the chip
+make fuse-compile CHIP_FILE=my_chip.h CHIP_NAME=MY_CHIP
+./build/fuse_test test_data.csv     # Test on new data
+
+# ─────────────────────────────────────────────────────
+# ENTROMORPHIC OS: The Read-Only Nervous System
+# ─────────────────────────────────────────────────────
+make entromorph             # Build sentinel + director
+
+# Terminal 1: Launch sentinels (perception agents)
+./build/sentinel 0 CPU_0 --mock &
+./build/sentinel 4 NET_TX --mock &
+./build/sentinel 8 MEM_FREE --mock &
+
+# Terminal 2: Launch director (3x3 grid viewer)
+./build/director_text
+
+# ─────────────────────────────────────────────────────
+# HSOS: Hollywood Squares OS (distributed computation)
+# ─────────────────────────────────────────────────────
+make hsos                   # Run the HSOS demo
+
+# ─────────────────────────────────────────────────────
+# GPU CORTEX: 16 Million Liquid Neurons (CUDA)
+# ─────────────────────────────────────────────────────
+make cortex                 # Build the cortex benchmark
+./build/cortex_bench        # Run 256³ voxel benchmark
+
+# ─────────────────────────────────────────────────────
+# VISOR: Volumetric Brain Renderer (requires GLFW)
+# ─────────────────────────────────────────────────────
+make visor                  # Build the raymarching visualizer
+./build/visor               # Watch the shockwave propagate
 ```
 
 ---
@@ -180,12 +219,29 @@ make sentinel
 
 ---
 
+## Validation
+
+The V3 Efficient Species passed all 5 Skeptic Tests:
+
+| Test | Doubt | Result | Status |
+|------|-------|--------|--------|
+| **Stability** | "Recurrent nets drift" | 1.47% / 100M steps | ✅ |
+| **Bandwidth** | "Memorized 1Hz sine" | 0.1-45 Hz @ 97.9% | ✅ |
+| **Noise** | "Only works clean" | 7.8x rejection | ✅ |
+| **Generalization** | "Only tracks circles" | All waveforms r>0.97 | ✅ |
+| **Determinism** | "FP varies by arch" | Bit-identical ARM64 | ✅ |
+
+See [`docs/VALIDATION.md`](docs/VALIDATION.md) for complete test results.
+
+---
+
 ## Components
 
 | Directory | Description |
 |-----------|-------------|
 | [`foundry/`](foundry/) | **Genesis seed generator** — Grow soft chips from scratch |
-| [`src/`](src/) | **Production tools** — Sentinel daemon for anomaly detection |
+| [`src/`](src/) | **Production tools** — Sentinel daemon, HSOS implementation |
+| [`bin/`](bin/) | **EntroMorphic OS** — Director visualization tools |
 | [`test/`](test/) | Benchmarks and verification tests |
 | [`examples/`](examples/) | Demo programs |
 

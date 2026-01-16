@@ -1,373 +1,351 @@
 /*
- * sentinel.c — EntroMorphic System Sentinel
+ * sentinel.c — EntroMorphic OS Sentinel Daemon
  *
- * "Define Order, and Chaos reveals itself."
+ * "The Read-Only Nervous System"
  *
- * A 396-byte anomaly detector that monitors system metrics in real-time.
- * Uses dual-tau architecture: Fast tracker (Zits) + Slow anchor (Drift).
+ * Each Sentinel is a perception agent that:
+ *   1. Reads a sensor value
+ *   2. Normalizes it via Auto-Gain Control (AGC)
+ *   3. Runs the V3 CfC Liquid Chip (396 bytes of physics)
+ *   4. Detects anomalies using the Second Star Constant
+ *   5. Writes state to shared memory for the Director to visualize
  *
- * Build:
- *   gcc -O3 -I../include sentinel.c -o sentinel -lm
+ * Compile:
+ *   gcc -O3 -I../include sentinel.c -o sentinel -lrt -lm
  *
- * Run:
- *   ./sentinel              # Monitor CPU load
- *   ./sentinel --memory     # Monitor memory usage
- *   ./sentinel --network    # Monitor network packets
+ * Usage:
+ *   ./sentinel <ID 0-8> <LABEL> [--mock]
  *
- * Deploy:
- *   nohup ./sentinel > /var/log/sentinel.log 2>&1 &
+ * Example (launch the grid):
+ *   ./sentinel 0 "CPU_0" --mock &
+ *   ./sentinel 1 "CPU_1" --mock &
+ *   ./sentinel 4 "NET_TX" --mock &
+ *   ./sentinel 8 "MEM_FREE" --mock &
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
-#include <time.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <math.h>
+#include <string.h>
+#include <time.h>
 #include <signal.h>
 
-/* Include the evolved sine tracker */
-#include "../foundry/seeds/sine_seed.h"
+#include "shm_protocol.h"
+#include "../foundry/seeds/sine_seed.h"  /* The V3 CfC Chip */
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Configuration
+ * GLOBALS
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-#define SAMPLE_RATE_HZ    10      /* 10 samples per second */
-#define SAMPLE_INTERVAL   (1000000 / SAMPLE_RATE_HZ)  /* microseconds */
-
-/*
- * The Second Star Constant — 0.1122911624
- *
- * Discovered through evolutionary optimization of the V3 Efficient Species.
- * This threshold achieves 4/4 perfect anomaly detection across all test types:
- * spike, drop, noise burst, and gradual drift.
- *
- * Named for: "Second star to the right, and straight on 'til morning."
- *            — J.M. Barrie, Peter Pan
- *
- * The value emerged from the Gluttony Penalty evolution run. When the fitness
- * landscape was constrained by metabolic limits (MAX_ALLOWED_STATE=5.0) and
- * anti-identity pressure, the Efficient Species evolved with a natural
- * tracking error distribution that makes 0.1122911624 the optimal decision
- * boundary between "normal fluctuation" and "anomalous deviation."
- */
-#define SECOND_STAR_CONSTANT  0.1122911624f
-
-#define ZIT_THRESHOLD     SECOND_STAR_CONSTANT  /* Tuned for Efficient Species */
-#define DRIFT_THRESHOLD   0.5f                  /* Slow drift threshold */
-#define WARMUP_SAMPLES    50                    /* Samples before detection starts */
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Metric Sources
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-typedef enum {
-    METRIC_CPU_LOAD,
-    METRIC_MEMORY,
-    METRIC_NETWORK,
-} MetricType;
-
-/* Read 1-minute CPU load average */
-float read_cpu_load(void) {
-    double load = 0.0;
-    FILE* f = fopen("/proc/loadavg", "r");
-    if (f) {
-        if (fscanf(f, "%lf", &load) != 1) load = 0.0;
-        fclose(f);
-    }
-    return (float)load;
-}
-
-/* Read memory usage percentage */
-float read_memory_usage(void) {
-    FILE* f = fopen("/proc/meminfo", "r");
-    if (!f) return 0.0f;
-
-    unsigned long mem_total = 0, mem_available = 0;
-    char line[256];
-
-    while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "MemTotal:", 9) == 0) {
-            sscanf(line + 9, "%lu", &mem_total);
-        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
-            sscanf(line + 13, "%lu", &mem_available);
-        }
-    }
-    fclose(f);
-
-    if (mem_total == 0) return 0.0f;
-    return (float)(mem_total - mem_available) / (float)mem_total;
-}
-
-/* Read network packets per second (delta) */
-static unsigned long prev_rx = 0, prev_tx = 0;
-float read_network_activity(void) {
-    FILE* f = fopen("/proc/net/dev", "r");
-    if (!f) return 0.0f;
-
-    char line[512];
-    unsigned long rx = 0, tx = 0;
-
-    while (fgets(line, sizeof(line), f)) {
-        /* Look for eth0 or ens or any interface */
-        if (strstr(line, "eth") || strstr(line, "ens") || strstr(line, "enp")) {
-            char* colon = strchr(line, ':');
-            if (colon) {
-                unsigned long vals[16];
-                if (sscanf(colon + 1, "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu",
-                           &vals[0], &vals[1], &vals[2], &vals[3], &vals[4],
-                           &vals[5], &vals[6], &vals[7], &vals[8], &vals[9]) >= 10) {
-                    rx += vals[0];  /* bytes received */
-                    tx += vals[8];  /* bytes transmitted */
-                }
-            }
-        }
-    }
-    fclose(f);
-
-    float delta = 0.0f;
-    if (prev_rx > 0) {
-        delta = (float)((rx - prev_rx) + (tx - prev_tx)) / 1000000.0f;  /* MB/s */
-    }
-    prev_rx = rx;
-    prev_tx = tx;
-
-    return delta;
-}
-
-/* Dispatch metric reader */
-float read_metric(MetricType type) {
-    switch (type) {
-        case METRIC_CPU_LOAD: return read_cpu_load();
-        case METRIC_MEMORY:   return read_memory_usage();
-        case METRIC_NETWORK:  return read_network_activity();
-        default: return 0.0f;
-    }
-}
-
-const char* metric_name(MetricType type) {
-    switch (type) {
-        case METRIC_CPU_LOAD: return "CPU Load";
-        case METRIC_MEMORY:   return "Memory %";
-        case METRIC_NETWORK:  return "Net MB/s";
-        default: return "Unknown";
-    }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Dual-Tau Detector
- *
- * Fast Tracker: CfC chip (τ ~ 1-2 seconds) - detects spikes
- * Slow Anchor: EMA (τ ~ 30 seconds) - detects drift
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-typedef struct {
-    /* Fast tracker (CfC chip) */
-    float fast_state[sine_SEED_REGS];
-    float fast_output;
-
-    /* Slow anchor (EMA) */
-    float anchor;
-    float anchor_alpha;  /* EMA smoothing factor */
-
-    /* Statistics */
-    float baseline_mae;
-    int sample_count;
-    int warmup_complete;
-
-    /* Detection state */
-    int zit_active;
-    int drift_active;
-    int zit_count;
-    int drift_count;
-} DualTauDetector;
-
-void detector_init(DualTauDetector* d) {
-    memset(d, 0, sizeof(DualTauDetector));
-    sine_seed_reset(d->fast_state);
-    d->anchor_alpha = 0.02f;  /* ~50 sample time constant at 10Hz = 5 seconds */
-    d->baseline_mae = 0.1f;   /* Initial estimate */
-}
-
-typedef struct {
-    int zit_detected;
-    int drift_detected;
-    float zit_delta;
-    float drift_delta;
-    float fast_track;
-    float anchor;
-} DetectionResult;
-
-DetectionResult detector_step(DualTauDetector* d, float input) {
-    DetectionResult result = {0};
-
-    /* Run fast tracker (CfC chip) */
-    d->fast_output = sine_seed_step(input, d->fast_state);
-    result.fast_track = d->fast_output;
-
-    /* Update slow anchor (EMA) */
-    if (d->sample_count == 0) {
-        d->anchor = input;  /* Initialize to first value */
-    } else {
-        d->anchor = d->anchor * (1.0f - d->anchor_alpha) + input * d->anchor_alpha;
-    }
-    result.anchor = d->anchor;
-
-    d->sample_count++;
-
-    /* Warmup phase */
-    if (d->sample_count < WARMUP_SAMPLES) {
-        /* Update baseline MAE estimate */
-        float error = fabsf(input - d->fast_output);
-        d->baseline_mae = d->baseline_mae * 0.9f + error * 0.1f;
-        return result;
-    }
-
-    if (!d->warmup_complete) {
-        d->warmup_complete = 1;
-    }
-
-    /* Calculate deltas */
-    result.zit_delta = fabsf(input - d->fast_output);
-    result.drift_delta = fabsf(d->fast_output - d->anchor);
-
-    /* Zit detection (fast anomaly)
-     * Using Second Star Constant directly — proven 4/4 detection */
-    if (result.zit_delta > ZIT_THRESHOLD) {
-        result.zit_detected = 1;
-        if (!d->zit_active) {
-            d->zit_count++;
-            d->zit_active = 1;
-        }
-    } else {
-        d->zit_active = 0;
-    }
-
-    /* Drift detection (slow anomaly) */
-    if (result.drift_delta > DRIFT_THRESHOLD) {
-        result.drift_detected = 1;
-        if (!d->drift_active) {
-            d->drift_count++;
-            d->drift_active = 1;
-        }
-    } else {
-        d->drift_active = 0;
-    }
-
-    /* Update baseline MAE (slowly) */
-    if (!result.zit_detected && !result.drift_detected) {
-        float error = fabsf(input - d->fast_output);
-        d->baseline_mae = d->baseline_mae * 0.99f + error * 0.01f;
-    }
-
-    return result;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Signal Handling
- * ═══════════════════════════════════════════════════════════════════════════ */
-
+static GridMemory *grid = NULL;
+static int my_id = -1;
 static volatile int running = 1;
 
-void signal_handler(int sig) {
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SIGNAL HANDLER — Graceful Shutdown
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void handle_signal(int sig) {
     (void)sig;
     running = 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Main
+ * AUTO GAIN CONTROL (AGC)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Normalizes sensor readings to approximately [-1, 1] range using
+ * exponential moving average of mean and variance.
+ *
+ * This allows the V3 chip to work with any sensor scale.
+ */
+
+typedef struct {
+    float mean;
+    float variance;
+    float alpha;    /* Adaptation rate (smaller = slower adaptation) */
+    int warmup;     /* Samples before normalization kicks in */
+    int count;
+} AGC;
+
+static void agc_init(AGC *ctx) {
+    ctx->mean = 0.0f;
+    ctx->variance = 1.0f;
+    ctx->alpha = 0.01f;  /* Slow adaptation */
+    ctx->warmup = 50;    /* 50 samples before normalizing */
+    ctx->count = 0;
+}
+
+static float agc_process(AGC *ctx, float raw) {
+    ctx->count++;
+
+    /* Update running mean */
+    float diff = raw - ctx->mean;
+    ctx->mean += ctx->alpha * diff;
+
+    /* Update running variance */
+    ctx->variance = (1.0f - ctx->alpha) * ctx->variance +
+                    (ctx->alpha * diff * diff);
+
+    /* Compute standard deviation with floor */
+    float std = sqrtf(ctx->variance);
+    if (std < 0.001f) std = 0.001f;
+
+    /* Return normalized value (z-score) */
+    if (ctx->count < ctx->warmup) {
+        /* During warmup, just center around 0 */
+        return (raw - ctx->mean) / (std + 1.0f);
+    }
+
+    return (raw - ctx->mean) / std;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SHARED MEMORY LINK
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-int main(int argc, char** argv) {
-    /* Parse arguments */
-    MetricType metric = METRIC_CPU_LOAD;
-    int verbose = 0;
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--memory") == 0) metric = METRIC_MEMORY;
-        else if (strcmp(argv[i], "--network") == 0) metric = METRIC_NETWORK;
-        else if (strcmp(argv[i], "--cpu") == 0) metric = METRIC_CPU_LOAD;
-        else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) verbose = 1;
+static int init_shm(int id, const char *label) {
+    /* Open or create shared memory segment */
+    int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (fd == -1) {
+        perror("shm_open");
+        return -1;
     }
 
-    /* Setup signal handler */
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    /* Set size */
+    if (ftruncate(fd, sizeof(GridMemory)) == -1) {
+        perror("ftruncate");
+        close(fd);
+        return -1;
+    }
 
-    /* Print header */
-    printf("\n");
-    printf("╔══════════════════════════════════════════════════════════════╗\n");
-    printf("║  ENTROMORPHIC SENTINEL                                       ║\n");
-    printf("║  \"Define Order, and Chaos reveals itself.\"                  ║\n");
-    printf("╚══════════════════════════════════════════════════════════════╝\n");
-    printf("\n");
-    printf("Monitoring: %s\n", metric_name(metric));
-    printf("Sample rate: %d Hz\n", SAMPLE_RATE_HZ);
-    printf("Chip memory: %d bytes\n", (int)(sine_SEED_REGS * sizeof(float)));
-    printf("Warming up (%d samples)...\n", WARMUP_SAMPLES);
-    printf("\n");
+    /* Map into address space */
+    grid = (GridMemory *)mmap(NULL, sizeof(GridMemory),
+                               PROT_READ | PROT_WRITE,
+                               MAP_SHARED, fd, 0);
+    if (grid == MAP_FAILED) {
+        perror("mmap");
+        close(fd);
+        return -1;
+    }
 
-    /* Initialize detector */
-    DualTauDetector detector;
-    detector_init(&detector);
+    close(fd);  /* fd no longer needed after mmap */
 
-    /* Main loop */
-    time_t start_time = time(NULL);
+    /* Initialize our square */
+    my_id = id;
+    SquareState *s = &grid->squares[my_id];
+
+    memset(s, 0, sizeof(SquareState));
+    strncpy(s->label, label, sizeof(s->label) - 1);
+    s->label[sizeof(s->label) - 1] = '\0';
+    s->status = STATUS_OK;
+
+    /* Mark ourselves as active */
+    grid->active_mask |= (1 << my_id);
+    grid->version = SHM_PROTOCOL_VERSION;
+
+    return 0;
+}
+
+static void cleanup_shm(void) {
+    if (grid != NULL && my_id >= 0) {
+        /* Mark ourselves as inactive */
+        grid->active_mask &= ~(1 << my_id);
+        grid->squares[my_id].status = STATUS_OFFLINE;
+
+        munmap(grid, sizeof(GridMemory));
+        grid = NULL;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * MOCK SENSORS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * For demonstration, we generate synthetic sensor data.
+ * In production, these would read from /proc, sysfs, etc.
+ */
+
+static float read_mock_sensor(const char *label, int t) {
+    /* Base signal: smooth sinusoidal variation */
+    float base = sinf(t * 0.05f) * 20.0f + 50.0f;
+
+    /* Add noise */
+    float noise = ((rand() % 100) / 50.0f) - 1.0f;
+
+    /* Inject anomalies based on label */
+    float anomaly = 0.0f;
+
+    if (strcmp(label, "NET_TX") == 0) {
+        /* Square 4: Network TX spikes every ~10 seconds */
+        if ((t % 100) > 95) {
+            anomaly = 80.0f;  /* Spike! */
+        }
+    } else if (strcmp(label, "MEM_FREE") == 0) {
+        /* Square 8: Memory leak (gradual drift) */
+        if (t > 200 && t < 300) {
+            anomaly = -0.3f * (t - 200);  /* Slow drift down */
+        }
+    } else if (strcmp(label, "DISK_IO") == 0) {
+        /* Square 7: Burst I/O */
+        if ((t % 150) > 140) {
+            anomaly = 60.0f;
+        }
+    }
+
+    return base + noise + anomaly;
+}
+
+/* Real sensor reading (Linux-specific) */
+static float read_cpu_load(void) {
+    FILE *f = fopen("/proc/loadavg", "r");
+    if (!f) return 0.0f;
+    float load;
+    if (fscanf(f, "%f", &load) != 1) load = 0.0f;
+    fclose(f);
+    return load * 100.0f;  /* Scale to percentage-ish */
+}
+
+static float read_mem_free(void) {
+    FILE *f = fopen("/proc/meminfo", "r");
+    if (!f) return 0.0f;
+    char line[256];
+    long mem_free = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "MemFree:", 8) == 0) {
+            sscanf(line + 8, "%ld", &mem_free);
+            break;
+        }
+    }
+    fclose(f);
+    return (float)mem_free / 1024.0f;  /* MB */
+}
+
+static float read_sensor(const char *label, int t, int use_mock) {
+    if (use_mock) {
+        return read_mock_sensor(label, t);
+    }
+
+    /* Real sensors */
+    if (strncmp(label, "CPU", 3) == 0) {
+        return read_cpu_load();
+    } else if (strcmp(label, "MEM_FREE") == 0) {
+        return read_mem_free();
+    }
+
+    /* Fallback to mock */
+    return read_mock_sensor(label, t);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * MAIN LOOP
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void print_usage(const char *prog) {
+    printf("EntroMorphic OS Sentinel v1.0\n\n");
+    printf("Usage: %s <ID 0-8> <LABEL> [--mock]\n\n", prog);
+    printf("Arguments:\n");
+    printf("  ID      Square position (0-8) in the 3x3 grid\n");
+    printf("  LABEL   Sensor name (e.g., CPU_0, NET_TX, MEM_FREE)\n");
+    printf("  --mock  Use mock sensors instead of real system data\n\n");
+    printf("Example:\n");
+    printf("  %s 0 CPU_0 --mock &\n", prog);
+    printf("  %s 4 NET_TX --mock &\n", prog);
+    printf("  %s 8 MEM_FREE --mock &\n", prog);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    int id = atoi(argv[1]);
+    if (id < 0 || id >= GRID_SIZE) {
+        fprintf(stderr, "Error: ID must be 0-8\n");
+        return 1;
+    }
+
+    const char *label = argv[2];
+    int use_mock = (argc > 3 && strcmp(argv[3], "--mock") == 0);
+
+    /* Setup signal handlers */
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
+
+    /* Initialize shared memory */
+    if (init_shm(id, label) != 0) {
+        fprintf(stderr, "Failed to initialize shared memory\n");
+        return 1;
+    }
+
+    /* Initialize AGC */
+    AGC agc;
+    agc_init(&agc);
+
+    /* Initialize V3 CfC Chip state */
+    float chip_state[sine_SEED_REGS];
+    sine_seed_reset(chip_state);
+
+    printf(">> Sentinel %d (%s) ONLINE%s\n",
+           id, label, use_mock ? " [MOCK]" : "");
+    printf("   Threshold: %.10f (Second Star Constant)\n",
+           THRESHOLD_SECOND_STAR);
+    printf("   Update rate: %d Hz\n", 1000000 / SENTINEL_PERIOD_US);
+
+    int t = 0;
+    uint64_t zit_count = 0;
 
     while (running) {
-        float input = read_metric(metric);
-        DetectionResult result = detector_step(&detector, input);
+        /* 1. Read sensor */
+        float raw = read_sensor(label, t, use_mock);
 
-        /* Get timestamp */
-        time_t now = time(NULL);
-        struct tm* tm_info = localtime(&now);
-        char timestamp[20];
-        strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
+        /* 2. Normalize via AGC */
+        float norm = agc_process(&agc, raw);
 
-        /* Output */
-        if (result.zit_detected) {
-            printf("[%s] ZIT #%d | %s=%.3f | Track=%.3f | Delta=%.3f\n",
-                   timestamp, detector.zit_count, metric_name(metric),
-                   input, result.fast_track, result.zit_delta);
-            fflush(stdout);
+        /* 3. Execute V3 CfC Chip — THE PHYSICS ENGINE */
+        float tracker = sine_seed_step(norm, chip_state);
+
+        /* 4. Compute anomaly score */
+        float delta = fabsf(norm - tracker);
+
+        /* 5. Determine status using thresholds */
+        int status = STATUS_OK;
+        if (delta > THRESHOLD_SECOND_STAR) {
+            status = STATUS_CRIT;
+            zit_count++;
+            grid->total_zits++;
+        } else if (delta > THRESHOLD_DRIFT) {
+            status = STATUS_WARN;
         }
 
-        if (result.drift_detected) {
-            printf("[%s] DRIFT #%d | %s=%.3f | Track=%.3f | Anchor=%.3f | Delta=%.3f\n",
-                   timestamp, detector.drift_count, metric_name(metric),
-                   input, result.fast_track, result.anchor, result.drift_delta);
-            fflush(stdout);
+        /* 6. Update shared memory */
+        SquareState *s = &grid->squares[my_id];
+        s->raw_value = raw;
+        s->norm_value = norm;
+        s->tracker = tracker;
+        s->delta = delta;
+        s->status = status;
+        s->heartbeat++;
+
+        /* Debug output on anomaly */
+        if (status == STATUS_CRIT) {
+            printf("[ZIT #%lu] delta=%.4f > %.4f (t=%d)\n",
+                   zit_count, delta, THRESHOLD_SECOND_STAR, t);
         }
 
-        if (verbose && detector.warmup_complete) {
-            printf("[%s] %s=%.3f | Track=%.3f | Anchor=%.3f | MAE=%.4f\n",
-                   timestamp, metric_name(metric), input,
-                   result.fast_track, result.anchor, detector.baseline_mae);
-            fflush(stdout);
-        }
+        t++;
+        grid->uptime_ticks++;
 
-        /* Periodic status (every 60 seconds) */
-        if ((now - start_time) % 60 == 0 && detector.sample_count % SAMPLE_RATE_HZ == 0) {
-            printf("[%s] STATUS | Samples=%d | Zits=%d | Drifts=%d | MAE=%.4f\n",
-                   timestamp, detector.sample_count, detector.zit_count,
-                   detector.drift_count, detector.baseline_mae);
-            fflush(stdout);
-        }
-
-        usleep(SAMPLE_INTERVAL);
+        usleep(SENTINEL_PERIOD_US);
     }
 
-    /* Shutdown summary */
-    printf("\n");
-    printf("═══════════════════════════════════════════════════════════════\n");
-    printf("SENTINEL SHUTDOWN\n");
-    printf("═══════════════════════════════════════════════════════════════\n");
-    printf("Total samples: %d\n", detector.sample_count);
-    printf("Zits detected: %d\n", detector.zit_count);
-    printf("Drifts detected: %d\n", detector.drift_count);
-    printf("Final MAE: %.4f\n", detector.baseline_mae);
-    printf("═══════════════════════════════════════════════════════════════\n\n");
+    /* Cleanup */
+    printf(">> Sentinel %d (%s) shutting down...\n", id, label);
+    cleanup_shm();
 
     return 0;
 }
