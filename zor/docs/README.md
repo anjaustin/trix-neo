@@ -72,6 +72,38 @@ Together, they describe **frozen computation** — deterministic, verifiable, tr
 
 ---
 
+## Implementation Documents
+
+### [CfC + EntroMorph](CFC_ENTROMORPH.md)
+
+Integration of Closed-form Continuous-time neural networks with the TriX evolution engine.
+
+- CfC cells in pure C (206 ns latency)
+- EntroMorph genetic algorithm (65.8M mutations/sec)
+- ShapeFabric zero-copy evolution
+
+### [Zit Detection](ZIT_DETECTION.md)
+
+Anomaly detection via phase-locked tracking.
+
+- **Dual-tau architecture**: Fast tracker + slow anchor
+- **The core insight**: "The CfC's slowness IS its sensitivity"
+- **396-byte** detector with r > 0.97 correlation
+
+### [Soft Chips](SOFT_CHIPS.md)
+
+Portable frozen computation units for deployment.
+
+### [Engineering](ENGINEERING.md)
+
+Complete buildable specification: data structures, APIs, hardware targets.
+
+### [Architecture](ARCHITECTURE.md)
+
+System architecture from theory to metal.
+
+---
+
 ## Key Insights
 
 ### Shapes are Discovered, Not Invented
