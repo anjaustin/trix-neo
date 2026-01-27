@@ -7,9 +7,83 @@
  * Instead of generating loops, we generate the unrolled instruction stream
  * that an ASIC would execute.
  *
- * The key insight: a tensor operation is just a massive array of Primes
- * that need to be processed in parallel. We don't compile loops — we
- * stamp circuits.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARCHITECTURE OVERVIEW
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The forge generates code for int8 matrix-vector multiplication (matvec):
+ *
+ *     y[N] = W[N,K] × x[K]     where W is ternary {-1, 0, +1}
+ *
+ * BACKENDS:
+ *
+ *   1. C_PORTABLE    - Reference implementation with loops
+ *                      Platform: Any
+ *                      Performance: ~10 GOP/s
+ *
+ *   2. NEON_BLOCK_16 - 16 output channels per iteration
+ *                      Uses SDOT (4x int8 dot product -> int32)
+ *                      Platform: ARM64 with NEON
+ *                      Performance: ~189 GOP/s on M4
+ *
+ *   3. BLOCK8_K64    - 8 output channels × 64 K-elements per iteration
+ *                      Larger K-unroll = better prefetch efficiency
+ *                      Platform: ARM64 with NEON
+ *                      Performance: ~178 GOP/s on M4
+ *
+ *   4. GHOST_12      - 12 output channels with LDNP (non-temporal loads)
+ *                      Experimental streaming variant
+ *                      Platform: ARM64 with NEON
+ *                      Performance: Varies
+ *
+ *   5. I8MM_BATCH    - Uses SMMLA instruction (2x8x2 matrix blocks)
+ *                      Batched inference (batch size must be multiple of 2)
+ *                      Platform: ARMv8.6-a with I8MM extension
+ *                      Performance: ~235 GOP/s on M4 (batch=4)
+ *
+ * WEIGHT PACKING:
+ *
+ *   Block-16 Layout:
+ *     ┌─────────────────────┐
+ *     │ W[0,0..15]  (row 0) │  16 weights per row
+ *     │ W[1,0..15]  (row 1) │
+ *     │ ...                 │
+ *     │ W[15,0..15] (row 15)│  16 rows per block
+ *     └─────────────────────┘
+ *     Block size: 16 × 16 = 256 bytes
+ *
+ *   Block-8-K64 Layout:
+ *     ┌──────────────────────────────────────────┐
+ *     │ W[0,0..63]   (row 0, 64 weights)         │
+ *     │ W[1,0..63]   (row 1)                     │
+ *     │ ...                                      │
+ *     │ W[7,0..63]   (row 7)                     │
+ *     └──────────────────────────────────────────┘
+ *     Block size: 8 × 64 = 512 bytes
+ *
+ * KEY INSTRUCTIONS:
+ *
+ *   SDOT (vdotq_s32):
+ *     - 4 int8 × 4 int8 → int32, accumulated
+ *     - 16 operations per instruction
+ *     - The "Prime" of the Linear Kingdom
+ *
+ *   SMMLA (vsmmla_s32):
+ *     - 2×8 int8 × 8×2 int8 → 2×2 int32
+ *     - 32 operations per instruction
+ *     - Requires ARMv8.6-a I8MM extension
+ *
+ * PERFORMANCE MODEL:
+ *
+ *   Throughput = (N × K × 2) / time
+ *   where 2 = operations per MAC (multiply + accumulate)
+ *
+ *   M4 base chip achieves:
+ *     - Memory bandwidth: ~100 GB/s
+ *     - SDOT throughput: ~200 GOP/s (compute bound)
+ *     - Achieved: 178-235 GOP/s (depends on strategy)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
  *
  * Copyright 2026 Trix Research
  */
