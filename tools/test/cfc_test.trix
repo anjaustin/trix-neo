@@ -1,0 +1,33 @@
+# cfc_test.trix — CfC Cell Soft Chip Specification
+# Tests Linear Kingdom integration
+
+softchip:
+  name: cfc_test
+  version: 1.0.0
+  description: Test CfC cell with Linear Kingdom layers
+
+state:
+  bits: 512
+  layout: flat
+
+shapes:
+  - sigmoid
+  - tanh
+
+# Linear Kingdom layers (MatVec with weights)
+linear:
+  gate:
+    input_dim: 64
+    output_dim: 32
+    weights: gate_weights.bin
+    activation: sigmoid
+  
+  candidate:
+    input_dim: 64
+    output_dim: 32
+    weights: candidate_weights.bin
+    activation: tanh
+
+inference:
+  mode: first_match
+  default: unknown
