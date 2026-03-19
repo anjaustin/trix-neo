@@ -81,6 +81,7 @@ set(TRIX_RUNTIME_SOURCES
     zor/src/logging.c
     zor/src/validation.c
     zor/src/thread.c
+    zor/src/version.c
 )
 
 set(TRIX_RUNTIME_HEADERS
@@ -89,6 +90,7 @@ set(TRIX_RUNTIME_HEADERS
     zor/include/trixc/memory.h
     zor/include/trixc/validation.h
     zor/include/trixc/thread.h
+    zor/include/trixc/version.h
 )
 
 # Static library
@@ -186,6 +188,7 @@ if(TRIX_BUILD_TESTS)
     add_trix_test(test_memory zor/test/test_memory.c)
     add_trix_test(test_validation zor/test/test_validation.c)
     add_trix_test(test_thread zor/test/test_thread.c)
+    add_trix_test(test_version zor/test/test_version.c)
     
     # Logging demo
     add_executable(test_logging_demo zor/test/test_logging_demo.c)
@@ -194,7 +197,7 @@ if(TRIX_BUILD_TESTS)
     # Custom test target to run all tests
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_errors test_memory test_validation test_thread
+        DEPENDS test_errors test_memory test_validation test_thread test_version
         COMMENT "Running all unit tests"
     )
 endif()
