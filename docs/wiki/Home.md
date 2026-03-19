@@ -12,7 +12,8 @@ Welcome to the TriX project wiki - your comprehensive guide to understanding, bu
 | [Deployment](Deployment.md) | Docker, CI/CD, and production deployment |
 | [Security](Security.md) | Security model and best practices |
 | [API Reference](API-Reference.md) | Complete API documentation |
-| [Contributing](Contributing.md) | How to contribute to TriX |
+| [Benchmarks](Benchmarks.md) | Performance benchmarks across platforms |
+| [Contributing](../CONTRIBUTING.md) | How to contribute to TriX |
 
 ## What is TriX?
 
