@@ -46,6 +46,8 @@ struct trix_chip {
 
 /* Portable popcount (works everywhere) */
 static int popcount64(const uint8_t* a, const uint8_t* b) {
+    if (!a || !b) return 512;  /* Max distance for NULL input */
+    
     int count = 0;
     for (int i = 0; i < STATE_BYTES; i++) {
         uint8_t x = a[i] ^ b[i];
@@ -267,12 +269,20 @@ trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
         return result;
     }
     
+    if (chip->num_signatures <= 0) {
+        result.label = NULL;
+        return result;
+    }
+    
     int best_distance = 512;
     int best_index = -1;
     int best_threshold = 0;
     
     /* Check each signature */
     for (int i = 0; i < chip->num_signatures; i++) {
+        /* Skip uninitialized signatures (threshold 0 means skip) */
+        if (chip->thresholds[i] <= 0) continue;
+        
         int dist = popcount64(input, chip->signatures[i]);
         
         if (dist <= chip->thresholds[i] && dist < best_distance) {
@@ -281,14 +291,14 @@ trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
             best_threshold = chip->thresholds[i];
             
             if (chip->mode == 0) {
-                /* First match mode - stop at first match */
+                /* First match mode - found best match, stop searching */
                 break;
             }
         }
     }
     
     result.match = best_index;
-    result.distance = best_distance;
+    result.distance = (best_index >= 0) ? best_distance : 512;
     result.threshold = best_threshold;
     result.label = (best_index >= 0) ? chip->labels[best_index] : NULL;
     
