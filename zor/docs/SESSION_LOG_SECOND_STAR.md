@@ -238,4 +238,62 @@ is the optimal decision boundary for that distribution.
 
 ---
 
+## The 5 Skeptic Tests
+
+After the Second Star discovery, we subjected the V3 species to comprehensive validation:
+
+### Test 1: Stability (100M Steps)
+- **Doubt:** "Recurrent nets accumulate error"
+- **Result:** 1.47% MAE drift over 100M steps
+- **Verdict:** ✅ STABLE
+
+### Test 2: Bandwidth (Frequency Sweep)
+- **Doubt:** "It memorized a 1Hz sine"
+- **Result:** 0.1-45 Hz @ 97.9% correlation (450x range!)
+- **Discovery:** Zero-Latency Predictor (not classic LPF)
+- **Verdict:** ✅ WIDEBAND
+
+### Test 3: Noise Rejection (Noise Ramp)
+- **Doubt:** "Only works on clean data"
+- **Result:** 7.8x variance rejection
+- **Key Insight:** Output variance flat while input explodes
+- **Verdict:** ✅ ROBUST
+
+### Test 4: Generalization (Unseen Shapes)
+- **Doubt:** "Can only track circles"
+- **Result:** Triangle, Square, Sawtooth all r > 0.97
+- **Discovery:** 341.6x slew limiting (Shark Fin confirmed)
+- **Verdict:** ✅ GENERALIZES
+
+### Test 5: Determinism (Cross-Platform)
+- **Doubt:** "FP math varies by architecture"
+- **Result:** Bit-identical on ARM64/NEON
+- **Reference Hash:** 0x7B2AA627D27A4A5C
+- **Verdict:** ✅ DETERMINISTIC
+
+### Complete Scorecard
+
+| Test | Result | Status |
+|------|--------|--------|
+| Stability | 1.47% drift / 100M steps | ✅ |
+| Bandwidth | 0.1-45 Hz @ 97.9% | ✅ |
+| Noise | 7.8x rejection | ✅ |
+| Generalization | All waveforms r>0.97 | ✅ |
+| Determinism | Bit-identical | ✅ |
+
+---
+
+## Test Files Created
+
+| File | Purpose |
+|------|---------|
+| `test/stability_test.c` | 100M step numerical stability |
+| `test/frequency_sweep.c` | Bandwidth / Bode plot analysis |
+| `test/noise_ramp.c` | Noise rejection measurement |
+| `test/generalization_test.c` | Unseen waveform tracking |
+| `test/sawtooth_test.c` | Shark Fin / internal capacitance |
+| `test/determinism_test.c` | Cross-platform verification |
+
+---
+
 *"Define Order, and Chaos reveals itself."*

@@ -424,6 +424,192 @@ int softchip_parse(const char* filename, SoftChipSpec* spec) {
     return TRIX_OK;
 }
 
+/* Parse from string content (for fuzzing and testing) */
+int softchip_parse_string(const char* content, SoftChipSpec* spec) {
+    if (!content || !spec) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    
+    int init_result = softchip_init(spec);
+    if (init_result != TRIX_OK) {
+        log_error("softchip_parse_string: Failed to initialize spec");
+        return init_result;
+    }
+    
+    char line[1024];
+    char section[64] = "";
+    Signature* current_sig = NULL;
+    LinearLayerSpec* current_linear = NULL;
+    
+    const char* ptr = content;
+    while (ptr && *ptr) {
+        /* Get next line */
+        size_t line_len = strcspn(ptr, "\n");
+        if (line_len >= sizeof(line)) {
+            line_len = sizeof(line) - 1;
+        }
+        memcpy(line, ptr, line_len);
+        line[line_len] = '\0';
+        
+        char* p = trim(line);
+        
+        if (*p == '\0' || *p == '#') {
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        
+        if (strncmp(p, "softchip:", 9) == 0) {
+            trix_strcpy_safe(section, "softchip", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        if (strncmp(p, "state:", 6) == 0) {
+            trix_strcpy_safe(section, "state", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        if (strncmp(p, "shapes:", 7) == 0) {
+            trix_strcpy_safe(section, "shapes", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        if (strncmp(p, "signatures:", 11) == 0) {
+            trix_strcpy_safe(section, "signatures", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        if (strncmp(p, "inference:", 10) == 0) {
+            trix_strcpy_safe(section, "inference", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        if (strncmp(p, "linear:", 7) == 0) {
+            trix_strcpy_safe(section, "linear", sizeof(section));
+            ptr += line_len + 1;
+            if (*ptr == '\n') ptr++;
+            continue;
+        }
+        
+        char* colon = strchr(p, ':');
+        if (colon) {
+            *colon = '\0';
+            char* key = trim(p);
+            char* value = trim(colon + 1);
+            
+            if (strcmp(section, "softchip") == 0) {
+                if (strcmp(key, "name") == 0) {
+                    trix_strcpy_safe(spec->name, value, sizeof(spec->name));
+                } else if (strcmp(key, "version") == 0) {
+                    trix_strcpy_safe(spec->version, value, sizeof(spec->version));
+                } else if (strcmp(key, "description") == 0) {
+                    trix_strcpy_safe(spec->description, value, sizeof(spec->description));
+                }
+            } else if (strcmp(section, "state") == 0) {
+                if (strcmp(key, "bits") == 0) {
+                    spec->state_bits = atoi(value);
+                } else if (strcmp(key, "layout") == 0) {
+                    if (strcmp(value, "cube") == 0) {
+                        spec->layout = LAYOUT_CUBE;
+                    } else {
+                        spec->layout = LAYOUT_FLAT;
+                    }
+                }
+            } else if (strcmp(section, "inference") == 0) {
+                if (strcmp(key, "mode") == 0) {
+                    if (strcmp(value, "first_match") == 0) {
+                        spec->mode = MODE_FIRST_MATCH;
+                    } else if (strcmp(value, "all_match") == 0) {
+                        spec->mode = MODE_ALL_MATCH;
+                    }
+                } else if (strcmp(key, "default") == 0) {
+                    trix_strcpy_safe(spec->default_label, value, sizeof(spec->default_label));
+                }
+            } else if (strcmp(section, "signatures") == 0) {
+                int indent = 0;
+                const char* lp = line;
+                while (*lp == ' ') { indent++; lp++; }
+                
+                if (indent <= 2 && strlen(key) > 0 &&
+                    strcmp(key, "pattern") != 0 &&
+                    strcmp(key, "threshold") != 0 &&
+                    strcmp(key, "shape") != 0) {
+                    if (spec->num_signatures < MAX_SIGNATURES) {
+                        current_sig = &spec->signatures[spec->num_signatures++];
+                        memset(current_sig, 0, sizeof(Signature));
+                        trix_strcpy_safe(current_sig->name, key, sizeof(current_sig->name));
+                        current_sig->threshold = 64;
+                        current_sig->shape_index = SHAPE_SIGMOID;
+                    }
+                } else if (current_sig) {
+                    if (strcmp(key, "pattern") == 0) {
+                        if (strncmp(value, "base64:", 7) == 0) {
+                            signature_from_base64(value, current_sig->pattern);
+                        } else {
+                            signature_from_hex(value, current_sig->pattern);
+                        }
+                    } else if (strcmp(key, "threshold") == 0) {
+                        current_sig->threshold = atoi(value);
+                    } else if (strcmp(key, "shape") == 0) {
+                        current_sig->shape_index = shape_from_name(value);
+                    }
+                }
+            } else if (strcmp(section, "linear") == 0) {
+                int indent = 0;
+                const char* lp = line;
+                while (*lp == ' ') { indent++; lp++; }
+                
+                if (indent <= 2 && strlen(key) > 0 &&
+                    strcmp(key, "input_dim") != 0 &&
+                    strcmp(key, "output_dim") != 0 &&
+                    strcmp(key, "weights") != 0 &&
+                    strcmp(key, "bias") != 0 &&
+                    strcmp(key, "activation") != 0) {
+                    if (spec->num_linear_layers < MAX_LINEAR_LAYERS) {
+                        current_linear = &spec->linear_layers[spec->num_linear_layers++];
+                        memset(current_linear, 0, sizeof(LinearLayerSpec));
+                        trix_strcpy_safe(current_linear->name, key, sizeof(current_linear->name));
+                        current_linear->activation = LINEAR_ACT_NONE;
+                    }
+                } else if (current_linear) {
+                    if (strcmp(key, "input_dim") == 0) {
+                        current_linear->input_dim = atoi(value);
+                    } else if (strcmp(key, "output_dim") == 0) {
+                        current_linear->output_dim = atoi(value);
+                    } else if (strcmp(key, "weights") == 0) {
+                        trix_strcpy_safe(current_linear->weights_file, value, sizeof(current_linear->weights_file));
+                    } else if (strcmp(key, "bias") == 0) {
+                        trix_strcpy_safe(current_linear->bias_file, value, sizeof(current_linear->bias_file));
+                    } else if (strcmp(key, "activation") == 0) {
+                        current_linear->activation = linear_act_from_name(value);
+                    }
+                }
+            }
+        } else if (strcmp(section, "shapes") == 0) {
+            if (*p == '-') {
+                p = trim(p + 1);
+                if (spec->num_shapes < MAX_SHAPES) {
+                    spec->shapes[spec->num_shapes++] = shape_from_name(p);
+                }
+            }
+        }
+        
+        ptr += line_len + 1;
+        if (*ptr == '\n') ptr++;
+    }
+    
+    return TRIX_OK;
+}
+
 void softchip_print(const SoftChipSpec* spec) {
     printf("Soft Chip: %s v%s\n", spec->name, spec->version);
     if (spec->description[0]) {

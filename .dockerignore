@@ -1,0 +1,23 @@
+# Ignore build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Ignore tests and examples
+zor/test/
+zor/examples/
+tools/test/
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+
+# Ignore documentation that isn't needed for container
+*.md
+docs/
+
+# Ignore git
+.git/

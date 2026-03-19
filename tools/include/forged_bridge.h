@@ -27,7 +27,7 @@ extern "C" {
  * TRIT <-> INT8 CONVERSION
  *
  * Yinsen packing: 4 trits per byte, 2 bits each
- *   00 = 0, 01 = +1, 11 = -1
+ *   00 = 0, 01 = +1, 10 = -1, 11 = reserved
  *
  * Forge layout: int8 values {-1, 0, +1}, Block-8-K64 arrangement
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -35,7 +35,7 @@ extern "C" {
 /* Trit encoding (matches yinsen/ternary.h) */
 #define TRIT_ZERO  0x0
 #define TRIT_POS   0x1
-#define TRIT_NEG   0x3
+#define TRIT_NEG   0x2  /* canonical: see yinsen/include/trit_encoding.h */
 
 /* Unpack single trit from packed byte */
 static inline int8_t bridge_trit_unpack(uint8_t packed, int pos) {

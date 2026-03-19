@@ -206,10 +206,24 @@ if(TRIX_BUILD_TESTS)
     add_executable(test_logging_demo zor/test/test_logging_demo.c)
     target_link_libraries(test_logging_demo PRIVATE TriX::Runtime)
     
+    # Toolchain integration tests (P0 for pilots)
+    function(add_toolchain_test test_name test_source)
+        add_executable(${test_name} ${test_source})
+        target_link_libraries(${test_name} PRIVATE trix_tools TriX::Runtime)
+        add_test(NAME ${test_name} COMMAND ${test_name})
+        
+        set_tests_properties(${test_name} PROPERTIES
+            TIMEOUT 60
+            LABELS "toolchain"
+        )
+    endfunction()
+    
+    add_toolchain_test(test_toolchain_integration tools/test/test_toolchain_integration.c)
+    
     # Custom test target to run all tests
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration
+        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_toolchain_integration
         COMMENT "Running all unit tests"
     )
     
