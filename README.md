@@ -1,9 +1,8 @@
 # TriX - Deterministic AI Runtime
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/trix-ai/trix)
-[![Tests](https://img.shields.io/badge/tests-70%2F70%20passing-success)](https://github.com/trix-ai/trix)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](https://github.com/trix-ai/trix)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/anjaustin/trix-neo)
+[![Tests](https://img.shields.io/badge/tests-9%2F9%20passing-success)](https://github.com/anjaustin/trix-neo)
 
 > **Frozen Computation + Learned Routing = Deterministic AI**
 
@@ -40,57 +39,58 @@ Traditional neural networks are black boxes with non-deterministic behavior. Tri
 ### Installation
 
 ```bash
-# macOS (Homebrew)
-brew install trix
-
-# Linux (apt)
-sudo apt install trix-runtime
-
-# Python (pip)
-pip install trix-runtime
-
 # From source
-git clone https://github.com/trix-ai/trix.git
-cd trix
+git clone https://github.com/anjaustin/trix-neo.git
+cd trix-neo
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --parallel 4
-sudo cmake --install .
+make -j$(nproc)
+
+# Run tests
+ctest --output-on-failure
 ```
 
-### Hello World
-
-```bash
-# Create your first frozen computation
-trix new my_model.trix
-
-# Compile to C
-trix compile my_model.trix -o my_model.c
-
-# Build and run
-gcc my_model.c -ltrix_runtime -o my_model
-./my_model
-```
-
-### Example: Diabetes Prediction
+### Example: Load and Run Inference
 
 ```c
 #include <trixc/runtime.h>
+#include <stdio.h>
 
 int main() {
-    // Load frozen model
-    trix_model_t *model = trix_load("diabetes_predictor.trix");
+    // Load chip from .trix spec file
+    int error = 0;
+    trix_chip_t* chip = trix_load("model.trix", &error);
+    if (!chip) {
+        fprintf(stderr, "Failed to load: %d\n", error);
+        return 1;
+    }
     
-    // Predict (deterministic)
-    float input[8] = {120, 80, 25.3, 45, 0, 0, 33, 0};
-    float output[1];
-    trix_forward(model, input, output);
+    // Run inference with 64-byte input
+    uint8_t input[64] = {0x00, 0x01, 0x02, /* ... */};
+    trix_result_t result = trix_infer(chip, input);
     
-    printf("Risk score: %.4f\n", output[0]);  // Always same value for same input
+    if (result.match >= 0) {
+        printf("Match: %s (distance: %d)\n", result.label, result.distance);
+    } else {
+        printf("No match (distance: %d)\n", result.distance);
+    }
     
-    trix_free(model);
+    trix_chip_free(chip);
     return 0;
 }
+```
+
+Or use the CLI tool:
+
+```bash
+# Generate C code from .trix spec
+./build/trix gesture.trix --target=c
+
+# The toolchain generates:
+# - gesture.h
+# - gesture.c  
+# - gesture_test.c
+# - Makefile
 ```
 
 ---
@@ -193,20 +193,19 @@ cd build
 ctest --output-on-failure
 
 # Results:
-# 6/6 test executables passing
-# 70/70 individual unit tests passing
-# 100% pass rate
-# ZERO memory leaks (AddressSanitizer verified)
+# 9/9 tests passing (100%)
+# ZERO memory leaks
 # ZERO race conditions
 ```
 
 ### Test Coverage
-- ✅ Error handling (8 tests)
-- ✅ Memory safety (11 tests)
-- ✅ Input validation (24 tests)
-- ✅ Thread safety (14 tests)
-- ✅ API stability (5 tests)
-- ✅ Integration (8 tests)
+- ✅ Error handling
+- ✅ Memory safety  
+- ✅ Input validation
+- ✅ Thread safety
+- ✅ Integration
+- ✅ Toolchain (parser, codegen)
+- ✅ Parser security (red-teaming)
 
 ### Quality Metrics
 - **Novelty:** 8/10 (genuinely novel approach)
@@ -249,21 +248,21 @@ ctest --output-on-failure
 ### Build from Source
 
 ```bash
-git clone https://github.com/trix-ai/trix.git
-cd trix
+git clone https://github.com/anjaustin/trix-neo.git
+cd trix-neo
 
 # Configure
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
 # Build (parallel)
-cmake --build . --parallel 4
+make -j$(nproc)
 
 # Test
 ctest --output-on-failure
 
 # Install
-sudo cmake --install .
+sudo make install
 ```
 
 ### Build Options
@@ -299,16 +298,13 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 # Clone and build
-git clone https://github.com/trix-ai/trix.git
-cd trix && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Debug -DTRIX_ENABLE_ASAN=ON
+git clone https://github.com/anjaustin/trix-neo.git
+cd trix-neo && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake --build .
 
 # Run tests
 ctest
-
-# Format code (if clang-format installed)
-find ../zor -name '*.c' -o -name '*.h' | xargs clang-format -i
 ```
 
 ---
@@ -354,11 +350,10 @@ The trust is absolute.
 
 ## 🔗 Links
 
-- **Documentation:** [birds-eye-view](BIRDS_EYE_VIEW.md)
-- **Website:** https://trix.ai (coming soon)
-- **Issues:** https://github.com/trix-ai/trix/issues
-- **Discussions:** https://github.com/trix-ai/trix/discussions
-- **Twitter:** @trix_ai (coming soon)
+- **Documentation:** [docs/wiki/Home.md](docs/wiki/Home.md)
+- **Wiki:** [Getting Started](docs/wiki/Getting-Started.md)
+- **Issues:** https://github.com/anjaustin/trix-neo/issues
+- **Discussions:** https://github.com/anjaustin/trix-neo/discussions
 
 ---
 
