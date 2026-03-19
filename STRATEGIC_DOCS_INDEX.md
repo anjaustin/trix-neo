@@ -9,16 +9,18 @@ Date: March 19, 2026
 ## Quick Start
 
 **If you only read one document, read:**
-👉 **[STRATEGY.md](STRATEGY.md)** - Executive summary with actionable next steps
+👉 **[BIRDS_EYE_VIEW.md](BIRDS_EYE_VIEW.md)** - Complete landscape guide from the lookout (60 min read)
 
 **To understand the full picture, read in this order:**
-1. [STRATEGY.md](STRATEGY.md) - Executive summary (15 min read)
-2. [zor/docs/PRODUCTION_READINESS.md](zor/docs/PRODUCTION_READINESS.md) - Implementation roadmap (50 min read)
-3. [zor/docs/REPOSITORY_AUDIT.md](zor/docs/REPOSITORY_AUDIT.md) - Detailed audit (45 min read)
-4. [zor/docs/THROUGHLINE.md](zor/docs/THROUGHLINE.md) - Vision consistency (30 min read)
-5. [zor/docs/STEP_CHANGE.md](zor/docs/STEP_CHANGE.md) - Execution plans (60 min read)
+1. [BIRDS_EYE_VIEW.md](BIRDS_EYE_VIEW.md) - Complete landscape overview (60 min read) ⭐ **START HERE**
+2. [STRATEGY.md](STRATEGY.md) - Executive summary (15 min read)
+3. [PROGRESS_FINAL.md](PROGRESS_FINAL.md) - Completion report (20 min read)
+4. [zor/docs/PRODUCTION_READINESS.md](zor/docs/PRODUCTION_READINESS.md) - Implementation roadmap (50 min read)
+5. [zor/docs/REPOSITORY_AUDIT.md](zor/docs/REPOSITORY_AUDIT.md) - Detailed audit (45 min read)
+6. [zor/docs/THROUGHLINE.md](zor/docs/THROUGHLINE.md) - Vision consistency (30 min read)
+7. [zor/docs/STEP_CHANGE.md](zor/docs/STEP_CHANGE.md) - Execution plans (60 min read)
 
-**Total reading time:** ~3.5 hours to understand the complete strategy
+**Total reading time:** ~4.5 hours to understand the complete strategy
 
 ---
 
