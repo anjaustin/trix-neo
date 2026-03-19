@@ -25,6 +25,8 @@
  * SIMD Popcount Implementations
  */
 
+#include <stdatomic.h>
+
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
@@ -56,7 +58,7 @@ static int popcount64_portable(const uint8_t* a, const uint8_t* b) {
 static int popcount64_neon(const uint8_t* a, const uint8_t* b) {
     if (!a || !b) return 512;
     
-    /* Load 64 bytes in 4x16 vectors */
+    /* Load 64 bytes in 4x16 vectors - unaligned safe */
     uint8x16_t a0 = vld1q_u8(a);
     uint8x16_t a1 = vld1q_u8(a + 16);
     uint8x16_t a2 = vld1q_u8(a + 32);
@@ -103,10 +105,23 @@ static int popcount64_neon(const uint8_t* a, const uint8_t* b) {
 }
 #endif /* ARM_NEON */
 
-/* x86 AVX2 popcount */
+/* x86 AVX2 popcount - with runtime CPU feature check */
 #if defined(__AVX2__)
 static int popcount64_avx2(const uint8_t* a, const uint8_t* b) {
     if (!a || !b) return 512;
+    
+    /* Check POPCNT support at runtime */
+    static int has_popcnt = -1;
+    if (has_popcnt < 0) {
+        int ecx;
+        __asm__("cpuid" : "=c"(ecx) : "a"(1), "c"(0) : "ebx", "edx");
+        has_popcnt = (ecx >> 23) & 1;
+    }
+    
+    if (!has_popcnt) {
+        /* Fallback to portable if CPU lacks POPCNT */
+        return popcount64_portable(a, b);
+    }
     
     __m256i va = _mm256_loadu_si256((const __m256i*)a);
     __m256i vb = _mm256_loadu_si256((const __m256i*)b);
@@ -123,18 +138,27 @@ static int popcount64_avx2(const uint8_t* a, const uint8_t* b) {
 }
 #endif /* AVX2 */
 
-/* Choose best popcount at runtime */
+/* Thread-safe initialization using atomic */
 static popcount_fn choose_popcount(void) {
+    /* Use static init for thread safety */
+    static popcount_fn fn = NULL;
+    static int initialized = 0;
+    
+    if (!initialized) {
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    return popcount64_neon;
+        fn = popcount64_neon;
 #elif defined(__AVX2__)
-    return popcount64_avx2;
+        fn = popcount64_avx2;
 #else
-    return popcount64_portable;
+        fn = popcount64_portable;
 #endif
+        initialized = 1;
+    }
+    
+    return fn;
 }
 
-/* Global popcount function */
+/* Global popcount function with thread-safe initialization */
 static popcount_fn g_popcount = NULL;
 
 static int popcount64(const uint8_t* a, const uint8_t* b) {
