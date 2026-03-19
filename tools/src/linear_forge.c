@@ -89,6 +89,9 @@
  */
 
 #include "../include/linear_forge.h"
+#include "../../zor/include/trixc/memory.h"
+#include "../../zor/include/trixc/errors.h"
+#include "../../zor/include/trixc/logging.h"
 #include <string.h>
 #include <time.h>
 #include <stdarg.h>
@@ -719,8 +722,50 @@ static void emit_weights_header(StringBuffer* sb, const AggregateShapeSpec* spec
  * PUBLIC API
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+static int validate_spec(const AggregateShapeSpec* spec, trix_error_context_t* ctx) {
+    if (!spec) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, "AggregateShapeSpec is NULL");
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (spec->K <= 0 || spec->N <= 0) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS, 
+            "Invalid dimensions: K=%d, N=%d", spec->K, spec->N);
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    if (spec->K % 16 != 0 && spec->strategy != FORGE_STRATEGY_C_PORTABLE) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS,
+            "K must be multiple of 16 for NEON strategies");
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    if (spec->N % 16 != 0 && spec->strategy == FORGE_STRATEGY_NEON_BLOCK_16) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS,
+            "N must be multiple of 16 for BLOCK_16 strategy");
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    return TRIX_OK;
+}
+
 size_t forge_kernel_to_string(const AggregateShapeSpec* spec, 
                                char* buffer, size_t buffer_size) {
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    trix_log_init();
+    
+    if (!buffer || buffer_size == 0) {
+        log_error("forge_kernel_to_string: Invalid buffer");
+        return 0;
+    }
+    
+    int validation = validate_spec(spec, ctx);
+    if (validation != TRIX_OK) {
+        log_error("forge_kernel_to_string: %s", trix_error_description(validation));
+        return 0;
+    }
+    
+    log_info("Generating kernel for '%s' (K=%d, N=%d, strategy=%d)", 
+             spec->name, spec->K, spec->N, spec->strategy);
+    
     StringBuffer sb;
     sb_init(&sb, buffer, buffer_size);
     
@@ -768,31 +813,71 @@ size_t forge_kernel_to_string(const AggregateShapeSpec* spec,
 }
 
 int forge_kernel_to_file(const AggregateShapeSpec* spec, FILE* out) {
-    char buffer[65536];  /* 64KB should be enough for any kernel */
+    if (!spec || !out) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
+    char buffer[65536];
     size_t len = forge_kernel_to_string(spec, buffer, sizeof(buffer));
     
-    if (len == 0) return -1;
+    if (len == 0) {
+        log_error("forge_kernel_to_file: Failed to generate kernel");
+        return TRIX_ERROR_INTERNAL;
+    }
     
     size_t written = fwrite(buffer, 1, len, out);
-    return (written == len) ? 0 : -1;
+    if (written != len) {
+        log_error("forge_kernel_to_file: Failed to write kernel to file");
+        return TRIX_ERROR_FILE_WRITE;
+    }
+    
+    log_info("Successfully wrote kernel to file");
+    return TRIX_OK;
 }
 
 int forge_weights_header(const AggregateShapeSpec* spec, FILE* out) {
-    char buffer[1024 * 1024];  /* 1MB for large weight arrays */
+    if (!spec || !out) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    
+    int validation = validate_spec(spec, ctx);
+    if (validation != TRIX_OK) {
+        log_error("forge_weights_header: Validation failed");
+        return validation;
+    }
+    
+    char buffer[1024 * 1024];
     StringBuffer sb;
     sb_init(&sb, buffer, sizeof(buffer));
     
     emit_weights_header(&sb, spec);
     
     size_t written = fwrite(buffer, 1, sb.pos, out);
-    return (written == sb.pos) ? 0 : -1;
+    if (written != sb.pos) {
+        log_error("forge_weights_header: Failed to write weights header");
+        return TRIX_ERROR_FILE_WRITE;
+    }
+    
+    log_info("Successfully wrote weights header");
+    return TRIX_OK;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * WEIGHT PACKING
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-void forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K) {
+int forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K) {
+    if (!src || !dst) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (N % 16 != 0 || K % 16 != 0) {
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    
     const int K_blocks = K / 16;
     const int N_blocks = N / 16;
     const int block_stride = 16 * 16;
@@ -811,9 +896,17 @@ void forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K) {
             }
         }
     }
+    return TRIX_OK;
 }
 
-void forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K) {
+int forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K) {
+    if (!src || !dst) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (N % 8 != 0 || K % 64 != 0) {
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    
     const int K_blocks = K / 64;
     const int N_blocks = N / 8;
     const int block_stride = 8 * 64;  /* 512 bytes per block */
@@ -832,9 +925,17 @@ void forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K) {
             }
         }
     }
+    return TRIX_OK;
 }
 
-void forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K) {
+int forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K) {
+    if (!src || !dst) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (N % 12 != 0 || K % 64 != 0) {
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    
     const int K_blocks = K / 64;
     const int N_blocks = N / 12;
     const int block_stride = 12 * 64;
@@ -853,9 +954,14 @@ void forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K) {
             }
         }
     }
+    return TRIX_OK;
 }
 
-void forge_unpack_ternary(const uint8_t* packed, int8_t* unpacked, int n) {
+int forge_unpack_ternary(const uint8_t* packed, int8_t* unpacked, int n) {
+    if (!packed || !unpacked || n <= 0) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
     for (int i = 0; i < n; i++) {
         int byte_idx = i / 4;
         int bit_pos = (i % 4) * 2;
@@ -865,9 +971,14 @@ void forge_unpack_ternary(const uint8_t* packed, int8_t* unpacked, int n) {
         else if (bits == 1) unpacked[i] = 1;
         else unpacked[i] = -1;  /* bits == 2 or 3 */
     }
+    return TRIX_OK;
 }
 
-void forge_pack_i8mm(const int8_t* src, int8_t* dst, int N, int K) {
+int forge_pack_i8mm(const int8_t* src, int8_t* dst, int N, int K) {
+    if (!src || !dst || N <= 0 || K <= 0) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
     /* I8MM uses row-major format, but K must be multiple of 8 */
     int K_aligned = ((K + 7) / 8) * 8;
     
@@ -880,4 +991,5 @@ void forge_pack_i8mm(const int8_t* src, int8_t* dst, int N, int K) {
             }
         }
     }
+    return TRIX_OK;
 }

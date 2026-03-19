@@ -139,7 +139,7 @@ int forge_weights_header(const AggregateShapeSpec* spec, FILE* out);
  * Input:  Row-major int8 weights [N, K] where values are -1, 0, +1
  * Output: Block-16 layout [N/16, K/16, 16, 16]
  */
-void forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K);
+int forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K);
 
 /*
  * Pack ternary weights for Block-8-K64 kernel (highest performance)
@@ -147,7 +147,7 @@ void forge_pack_block16(const int8_t* src, int8_t* dst, int N, int K);
  * Input:  Row-major int8 weights [N, K]
  * Output: Block-8-K64 layout [N/8, K/64, 8, 64]
  */
-void forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K);
+int forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K);
 
 /*
  * Pack ternary weights for Ghost-12 kernel
@@ -155,7 +155,7 @@ void forge_pack_block8_k64(const int8_t* src, int8_t* dst, int N, int K);
  * Input:  Row-major int8 weights [N, K]
  * Output: Ghost-12 layout [N/12, K/64, 12, 64]
  */
-void forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K);
+int forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K);
 
 /*
  * Pack weights for I8MM batch kernel
@@ -167,12 +167,12 @@ void forge_pack_ghost12(const int8_t* src, int8_t* dst, int N, int K);
  * Input:  Row-major int8 weights [N, K]
  * Output: Row-major with K padded to multiple of 8
  */
-void forge_pack_i8mm(const int8_t* src, int8_t* dst, int N, int K);
+int forge_pack_i8mm(const int8_t* src, int8_t* dst, int N, int K);
 
 /*
  * Unpack 2-bit ternary to int8
  */
-void forge_unpack_ternary(const uint8_t* packed, int8_t* unpacked, int n);
+int forge_unpack_ternary(const uint8_t* packed, int8_t* unpacked, int n);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * METRICS

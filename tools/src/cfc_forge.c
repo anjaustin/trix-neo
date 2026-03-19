@@ -14,6 +14,9 @@
  */
 
 #include "../include/cfc_forge.h"
+#include "../../zor/include/trixc/memory.h"
+#include "../../zor/include/trixc/errors.h"
+#include "../../zor/include/trixc/logging.h"
 #include <string.h>
 #include <time.h>
 #include <stdarg.h>
@@ -470,7 +473,45 @@ static void emit_footer(StringBuffer* sb, const CfCCellSpec* spec) {
  * PUBLIC API
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+static int validate_cfc_spec(const CfCCellSpec* spec, trix_error_context_t* ctx) {
+    if (!spec) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, "CfCCellSpec is NULL");
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (spec->input_dim <= 0 || spec->hidden_dim <= 0) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS,
+            "Invalid dimensions: input_dim=%d, hidden_dim=%d",
+            spec->input_dim, spec->hidden_dim);
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    if (spec->has_output && spec->output_dim <= 0) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS,
+            "has_output=true but output_dim=%d", spec->output_dim);
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
+    return TRIX_OK;
+}
+
 size_t forge_cfc_to_string(const CfCCellSpec* spec, char* buffer, size_t size) {
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    trix_log_init();
+    
+    if (!buffer || size == 0) {
+        log_error("forge_cfc_to_string: Invalid buffer");
+        return 0;
+    }
+    
+    int validation = validate_cfc_spec(spec, ctx);
+    if (validation != TRIX_OK) {
+        log_error("forge_cfc_to_string: %s", trix_error_description(validation));
+        return 0;
+    }
+    
+    log_info("Generating CfC cell for '%s' (input=%d, hidden=%d)",
+             spec->name, spec->input_dim, spec->hidden_dim);
+    
     StringBuffer sb;
     sb_init(&sb, buffer, size);
     
@@ -497,11 +538,24 @@ size_t forge_cfc_to_string(const CfCCellSpec* spec, char* buffer, size_t size) {
 }
 
 int forge_cfc_to_file(const CfCCellSpec* spec, FILE* out) {
-    char buffer[256 * 1024];  /* 256KB should be enough */
+    if (!spec || !out) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
+    char buffer[256 * 1024];
     size_t len = forge_cfc_to_string(spec, buffer, sizeof(buffer));
     
-    if (len == 0) return -1;
+    if (len == 0) {
+        log_error("forge_cfc_to_file: Failed to generate CfC cell");
+        return TRIX_ERROR_INTERNAL;
+    }
     
     size_t written = fwrite(buffer, 1, len, out);
-    return (written == len) ? 0 : -1;
+    if (written != len) {
+        log_error("forge_cfc_to_file: Failed to write to file");
+        return TRIX_ERROR_FILE_WRITE;
+    }
+    
+    log_info("Successfully wrote CfC cell to file");
+    return TRIX_OK;
 }
