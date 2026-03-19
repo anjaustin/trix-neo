@@ -6,6 +6,7 @@
  */
 
 #include "../include/softchip.h"
+#include "../../zor/include/trixc/memory.h"  /* Safe memory operations */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,12 +36,12 @@ ShapeType shape_from_name(const char* name) {
 
 void softchip_init(SoftChipSpec* spec) {
     memset(spec, 0, sizeof(SoftChipSpec));
-    strcpy(spec->name, "unnamed");
-    strcpy(spec->version, "1.0.0");
+    trix_strcpy_safe(spec->name, "unnamed", sizeof(spec->name));
+    trix_strcpy_safe(spec->version, "1.0.0", sizeof(spec->version));
     spec->state_bits = 512;
     spec->layout = LAYOUT_CUBE;
     spec->mode = MODE_FIRST_MATCH;
-    strcpy(spec->default_label, "unknown");
+    trix_strcpy_safe(spec->default_label, "unknown", sizeof(spec->default_label));
     spec->num_linear_layers = 0;
 }
 
@@ -137,7 +138,8 @@ int signature_from_base64(const char* b64, uint8_t* pattern) {
 
 void signature_to_hex(const uint8_t* pattern, char* hex) {
     for (int i = 0; i < STATE_BYTES; i++) {
-        sprintf(hex + i*2, "%02x", pattern[i]);
+        /* Safe: each iteration writes exactly 2 chars, total buffer needs STATE_BYTES*2+1 */
+        snprintf(hex + i*2, 3, "%02x", pattern[i]);
     }
     hex[STATE_BYTES * 2] = '\0';
 }
@@ -165,27 +167,27 @@ int softchip_parse(const char* filename, SoftChipSpec* spec) {
 
         /* Section headers */
         if (strncmp(p, "softchip:", 9) == 0) {
-            strcpy(section, "softchip");
+            trix_strcpy_safe(section, "softchip", sizeof(section));
             continue;
         }
         if (strncmp(p, "state:", 6) == 0) {
-            strcpy(section, "state");
+            trix_strcpy_safe(section, "state", sizeof(section));
             continue;
         }
         if (strncmp(p, "shapes:", 7) == 0) {
-            strcpy(section, "shapes");
+            trix_strcpy_safe(section, "shapes", sizeof(section));
             continue;
         }
         if (strncmp(p, "signatures:", 11) == 0) {
-            strcpy(section, "signatures");
+            trix_strcpy_safe(section, "signatures", sizeof(section));
             continue;
         }
         if (strncmp(p, "inference:", 10) == 0) {
-            strcpy(section, "inference");
+            trix_strcpy_safe(section, "inference", sizeof(section));
             continue;
         }
         if (strncmp(p, "linear:", 7) == 0) {
-            strcpy(section, "linear");
+            trix_strcpy_safe(section, "linear", sizeof(section));
             continue;
         }
 
