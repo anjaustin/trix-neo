@@ -29,6 +29,7 @@ option(TRIX_BUILD_EXAMPLES "Build examples" ON)
 option(TRIX_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(TRIX_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(TRIX_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(TRIX_ENABLE_COVERAGE "Enable code coverage" OFF)
 
 # Compiler flags
 if(MSVC)
@@ -59,6 +60,16 @@ endif()
 if(TRIX_ENABLE_UBSAN)
     add_compile_options(-fsanitize=undefined)
     add_link_options(-fsanitize=undefined)
+endif()
+
+# Code coverage
+if(TRIX_ENABLE_COVERAGE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+        add_link_options(--coverage)
+    else()
+        message(WARNING "Code coverage is only supported with GCC or Clang")
+    endif()
 endif()
 
 # Platform detection
@@ -183,12 +194,13 @@ if(TRIX_BUILD_TESTS)
         )
     endfunction()
     
-    # Runtime tests
+    # Runtime tests - Core functionality
     add_trix_test(test_errors zor/test/test_errors.c)
     add_trix_test(test_memory zor/test/test_memory.c)
     add_trix_test(test_validation zor/test/test_validation.c)
     add_trix_test(test_thread zor/test/test_thread.c)
     add_trix_test(test_version zor/test/test_version.c)
+    add_trix_test(test_integration zor/test/test_integration.c)
     
     # Logging demo
     add_executable(test_logging_demo zor/test/test_logging_demo.c)
@@ -197,9 +209,31 @@ if(TRIX_BUILD_TESTS)
     # Custom test target to run all tests
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_errors test_memory test_validation test_thread test_version
+        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration
         COMMENT "Running all unit tests"
     )
+    
+    # Coverage report target
+    if(TRIX_ENABLE_COVERAGE)
+        find_program(LCOV_PATH lcov)
+        find_program(GENHTML_PATH genhtml)
+        
+        if(LCOV_PATH AND GENHTML_PATH)
+            add_custom_target(coverage
+                COMMAND ${LCOV_PATH} --directory . --zerocounters
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                COMMAND ${LCOV_PATH} --directory . --capture --output-file coverage.info
+                COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info
+                COMMAND ${GENHTML_PATH} coverage.info --output-directory coverage_report
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                DEPENDS test_errors test_memory test_validation test_thread test_version test_integration
+                COMMENT "Generating code coverage report"
+            )
+            message(STATUS "Code coverage report target 'coverage' available")
+        else()
+            message(WARNING "lcov and genhtml required for coverage reports")
+        endif()
+    endif()
 endif()
 
 #═══════════════════════════════════════════════════════════════════════════
@@ -303,6 +337,7 @@ message(STATUS "")
 message(STATUS "  AddressSanitizer:     ${TRIX_ENABLE_ASAN}")
 message(STATUS "  ThreadSanitizer:      ${TRIX_ENABLE_TSAN}")
 message(STATUS "  UBSanitizer:          ${TRIX_ENABLE_UBSAN}")
+message(STATUS "  Code Coverage:        ${TRIX_ENABLE_COVERAGE}")
 message(STATUS "")
 message(STATUS "  Install prefix:       ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "═══════════════════════════════════════════════════════════")
