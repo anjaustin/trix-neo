@@ -110,7 +110,7 @@ int softchip_parse_string(const char* content, SoftChipSpec* spec);
 /* Utility functions */
 const char* shape_name(ShapeType type);
 ShapeType shape_from_name(const char* name);
-void softchip_init(SoftChipSpec* spec);
+int softchip_init(SoftChipSpec* spec);
 void softchip_print(const SoftChipSpec* spec);
 
 /* Signature helpers */

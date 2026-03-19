@@ -3,14 +3,40 @@
  *
  * Part of TriX toolchain
  * Simple line-based parser for .trix specs
+ * 
+ * Production-hardened with error handling and logging
  */
 
 #include "../include/softchip.h"
 #include "../../zor/include/trixc/memory.h"  /* Safe memory operations */
+#include "../../zor/include/trixc/errors.h"   /* Error handling */
+#include "../../zor/include/trixc/logging.h"  /* Logging system */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+/* Toolchain-specific error codes */
+typedef enum {
+    TRIX_SOFTCHIP_ERROR_BASE = 0x2000,
+    TRIX_SOFTCHIP_ERROR_FILE_OPEN = TRIX_SOFTCHIP_ERROR_BASE + 1,
+    TRIX_SOFTCHIP_ERROR_PARSE_INVALID_FORMAT = TRIX_SOFTCHIP_ERROR_BASE + 2,
+    TRIX_SOFTCHIP_ERROR_PARSE_INVALID_HEX = TRIX_SOFTCHIP_ERROR_BASE + 3,
+    TRIX_SOFTCHIP_ERROR_PARSE_INVALID_BASE64 = TRIX_SOFTCHIP_ERROR_BASE + 4,
+    TRIX_SOFTCHIP_ERROR_INVALID_SHAPE = TRIX_SOFTCHIP_ERROR_BASE + 5,
+    TRIX_SOFTCHIP_ERROR_INVALID_LAYOUT = TRIX_SOFTCHIP_ERROR_BASE + 6,
+    TRIX_SOFTCHIP_ERROR_INVALID_MODE = TRIX_SOFTCHIP_ERROR_BASE + 7,
+    TRIX_SOFTCHIP_ERROR_TOO_MANY_SIGNATURES = TRIX_SOFTCHIP_ERROR_BASE + 8,
+    TRIX_SOFTCHIP_ERROR_TOO_MANY_SHAPES = TRIX_SOFTCHIP_ERROR_BASE + 9,
+    TRIX_SOFTCHIP_ERROR_TOO_MANY_LINEAR_LAYERS = TRIX_SOFTCHIP_ERROR_BASE + 10,
+    TRIX_SOFTCHIP_ERROR_INVALID_LINEAR_ACTIVATION = TRIX_SOFTCHIP_ERROR_BASE + 11,
+    TRIX_SOFTCHIP_ERROR_INVALID_THRESHOLD = TRIX_SOFTCHIP_ERROR_BASE + 12,
+    TRIX_SOFTCHIP_ERROR_INVALID_STATE_BITS = TRIX_SOFTCHIP_ERROR_BASE + 13,
+    TRIX_SOFTCHIP_ERROR_INVALID_DIMENSION = TRIX_SOFTCHIP_ERROR_BASE + 14,
+    TRIX_SOFTCHIP_ERROR_INVALID_INDENT = TRIX_SOFTCHIP_ERROR_BASE + 15,
+    TRIX_SOFTCHIP_ERROR_BUFFER_TOO_SMALL = TRIX_SOFTCHIP_ERROR_BASE + 16,
+    TRIX_SOFTCHIP_ERROR_NULL_POINTER = TRIX_SOFTCHIP_ERROR_BASE + 17,
+} TriXSoftChipError;
 
 /* Shape name lookup table */
 static const char* SHAPE_NAMES[] = {
@@ -34,7 +60,10 @@ ShapeType shape_from_name(const char* name) {
     return SHAPE_XOR;  /* Default */
 }
 
-void softchip_init(SoftChipSpec* spec) {
+int softchip_init(SoftChipSpec* spec) {
+    if (!spec) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
     memset(spec, 0, sizeof(SoftChipSpec));
     trix_strcpy_safe(spec->name, "unnamed", sizeof(spec->name));
     trix_strcpy_safe(spec->version, "1.0.0", sizeof(spec->version));
@@ -43,6 +72,7 @@ void softchip_init(SoftChipSpec* spec) {
     spec->mode = MODE_FIRST_MATCH;
     trix_strcpy_safe(spec->default_label, "unknown", sizeof(spec->default_label));
     spec->num_linear_layers = 0;
+    return TRIX_OK;
 }
 
 /* Parse linear activation name */
@@ -144,15 +174,88 @@ void signature_to_hex(const uint8_t* pattern, char* hex) {
     hex[STATE_BYTES * 2] = '\0';
 }
 
-/* Simple line-based parser for .trix files */
-int softchip_parse(const char* filename, SoftChipSpec* spec) {
-    FILE* f = fopen(filename, "r");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open file '%s'\n", filename);
-        return -1;
+/* Validate softchip specification */
+static int softchip_validate(const SoftChipSpec* spec, trix_error_context_t* ctx) {
+    if (!spec) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, "SoftChipSpec pointer is NULL");
+        return TRIX_ERROR_NULL_POINTER;
     }
 
-    softchip_init(spec);
+    if (spec->state_bits != 128 && spec->state_bits != 256 && 
+        spec->state_bits != 512 && spec->state_bits != 1024) {
+        log_warn("Non-standard state_bits %d, expected 128/256/512/1024", spec->state_bits);
+    }
+
+    if (spec->num_signatures > MAX_SIGNATURES) {
+        trix_error_set(ctx, TRIX_ERROR_TOO_MANY_SIGNATURES, 
+            "Too many signatures: %d (max %d)", spec->num_signatures, MAX_SIGNATURES);
+        return TRIX_ERROR_TOO_MANY_SIGNATURES;
+    }
+
+    if (spec->num_shapes > MAX_SHAPES) {
+        trix_error_set(ctx, TRIX_ERROR_TOO_MANY_SHAPES,
+            "Too many shapes: %d (max %d)", spec->num_shapes, MAX_SHAPES);
+        return TRIX_ERROR_TOO_MANY_SHAPES;
+    }
+
+    if (spec->num_linear_layers > MAX_LINEAR_LAYERS) {
+        trix_error_set(ctx, TRIX_ERROR_TOO_MANY_LAYERS,
+            "Too many linear layers: %d (max %d)", spec->num_linear_layers, MAX_LINEAR_LAYERS);
+        return TRIX_ERROR_TOO_MANY_LAYERS;
+    }
+
+    for (int i = 0; i < spec->num_signatures; i++) {
+        const Signature* sig = &spec->signatures[i];
+        if (sig->threshold < 0 || sig->threshold > STATE_BYTES * 8) {
+            trix_error_set(ctx, TRIX_ERROR_INVALID_THRESHOLD,
+                "Invalid threshold %d for signature '%s'", sig->threshold, sig->name);
+            return TRIX_ERROR_INVALID_THRESHOLD;
+        }
+    }
+
+    for (int i = 0; i < spec->num_linear_layers; i++) {
+        const LinearLayerSpec* layer = &spec->linear_layers[i];
+        if (layer->input_dim <= 0 || layer->output_dim <= 0) {
+            trix_error_set(ctx, TRIX_ERROR_INVALID_DIMENSIONS,
+                "Invalid dimensions for linear layer '%s': %d -> %d",
+                layer->name, layer->input_dim, layer->output_dim);
+            return TRIX_ERROR_INVALID_DIMENSIONS;
+        }
+    }
+
+    return TRIX_OK;
+}
+
+/* Simple line-based parser for .trix files */
+int softchip_parse(const char* filename, SoftChipSpec* spec) {
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    trix_log_init();
+
+    if (!filename || !spec) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, 
+            "filename or spec pointer is NULL");
+        log_error("softchip_parse: %s", trix_error_description(ctx ? (trix_error_t)ctx->code : TRIX_ERROR_NULL_POINTER));
+        return TRIX_ERROR_NULL_POINTER;
+    }
+
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        trix_error_set(ctx, TRIX_ERROR_FILE_NOT_FOUND, 
+            "Cannot open file '%s'", filename);
+        log_error("softchip_parse: %s", trix_error_description(ctx->code));
+        return TRIX_ERROR_FILE_NOT_FOUND;
+    }
+
+    log_info("Parsing .trix file: %s", filename);
+
+    int init_result = softchip_init(spec);
+    if (init_result != TRIX_OK) {
+        fclose(f);
+        log_error("softchip_parse: Failed to initialize spec");
+        return init_result;
+    }
 
     char line[1024];
     char section[64] = "";
@@ -308,7 +411,17 @@ int softchip_parse(const char* filename, SoftChipSpec* spec) {
     }
 
     fclose(f);
-    return 0;
+
+    int validation_result = softchip_validate(spec, ctx);
+    if (validation_result != TRIX_OK) {
+        log_error("softchip_parse: Validation failed for %s", filename);
+        return validation_result;
+    }
+
+    log_info("Successfully parsed .trix file: %s (shapes=%d, signatures=%d, linear=%d)",
+             filename, spec->num_shapes, spec->num_signatures, spec->num_linear_layers);
+
+    return TRIX_OK;
 }
 
 void softchip_print(const SoftChipSpec* spec) {

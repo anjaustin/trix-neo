@@ -146,7 +146,8 @@ static int cmd_forge(int argc, char** argv) {
         if (strncmp(argv[i], "--target=", 9) == 0) {
             opts.target = target_from_name(argv[i] + 9);
         } else if (strncmp(argv[i], "--output=", 9) == 0) {
-            opts.output_dir = argv[i] + 9;
+            strncpy(opts.output_dir, argv[i] + 9, sizeof(opts.output_dir) - 1);
+            opts.output_dir[sizeof(opts.output_dir) - 1] = '\0';
         } else if (strcmp(argv[i], "--no-test") == 0) {
             opts.generate_test = false;
         }

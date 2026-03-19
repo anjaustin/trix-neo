@@ -28,7 +28,7 @@ typedef struct {
     bool generate_test;      /* Generate test harness */
     bool generate_bench;     /* Generate benchmark code */
     bool optimize;           /* Enable optimizations */
-    const char* output_dir;  /* Output directory */
+    char output_dir[256];    /* Output directory */
 } CodegenOptions;
 
 /* Main code generation function */
@@ -42,7 +42,7 @@ int codegen_header(const SoftChipSpec* spec, FILE* out);
 /* Helper functions */
 const char* target_name(CodegenTarget target);
 CodegenTarget target_from_name(const char* name);
-void codegen_options_init(CodegenOptions* opts);
+int codegen_options_init(CodegenOptions* opts);
 
 /* File generation helpers */
 int generate_source_file(const SoftChipSpec* spec, const CodegenOptions* opts,

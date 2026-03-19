@@ -3,14 +3,31 @@
  *
  * Part of TriX toolchain
  * Generates C and NEON code from SoftChipSpec
+ * 
+ * Production-hardened with error handling and logging
  */
 
 #include "../include/codegen.h"
 #include "../include/linear_forge.h"
+#include "../../zor/include/trixc/memory.h"
+#include "../../zor/include/trixc/errors.h"
+#include "../../zor/include/trixc/logging.h"
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <errno.h>
+
+static const char* ERROR_NAMES[] = {
+    "codegen_ok",
+    "codegen_file_open",
+    "codegen_file_write",
+    "codegen_null_spec",
+    "codegen_null_opts",
+    "codegen_invalid_target",
+    "codegen_buffer_too_small",
+    "codegen_linear_failure",
+};
 
 static const char* TARGET_NAMES[] = {
     "c", "neon", "avx2", "avx512", "wasm", "verilog"
@@ -32,12 +49,17 @@ CodegenTarget target_from_name(const char* name) {
     return TARGET_C;  /* Default */
 }
 
-void codegen_options_init(CodegenOptions* opts) {
+int codegen_options_init(CodegenOptions* opts) {
+    if (!opts) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    memset(opts, 0, sizeof(CodegenOptions));
     opts->target = TARGET_C;
     opts->generate_test = true;
     opts->generate_bench = false;
     opts->optimize = true;
-    opts->output_dir = "output";
+    trix_strcpy_safe(opts->output_dir, "output", sizeof(opts->output_dir));
+    return TRIX_OK;
 }
 
 /* Generate timestamp string */
@@ -47,11 +69,36 @@ static void get_timestamp(char* buf, size_t size) {
     strftime(buf, size, "%Y-%m-%d %H:%M:%S", t);
 }
 
+/* Validate codegen inputs */
+static int validate_codegen_inputs(const SoftChipSpec* spec, const CodegenOptions* opts,
+                                    trix_error_context_t* ctx) {
+    if (!spec) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, "SoftChipSpec is NULL");
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (!opts) {
+        trix_error_set(ctx, TRIX_ERROR_NULL_POINTER, "CodegenOptions is NULL");
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    if (opts->target < 0 || opts->target >= TARGET_COUNT) {
+        trix_error_set(ctx, TRIX_ERROR_INVALID_ARGUMENT, "Invalid target: %d", opts->target);
+        return TRIX_ERROR_INVALID_ARGUMENT;
+    }
+    return TRIX_OK;
+}
+
 /* Generate the header file */
 int generate_header_file(const SoftChipSpec* spec, const CodegenOptions* opts,
                          const char* filename) {
+    if (!spec || !opts || !filename) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
     FILE* f = fopen(filename, "w");
-    if (!f) return -1;
+    if (!f) {
+        log_error("Failed to open header file for writing: %s", filename);
+        return TRIX_ERROR_FILE_WRITE;
+    }
 
     char timestamp[64];
     get_timestamp(timestamp, sizeof(timestamp));
@@ -155,8 +202,15 @@ static void emit_popcount(FILE* f, CodegenTarget target) {
 /* Generate the source file */
 int generate_source_file(const SoftChipSpec* spec, const CodegenOptions* opts,
                          const char* filename) {
+    if (!spec || !opts || !filename) {
+        return TRIX_ERROR_NULL_POINTER;
+    }
+    
     FILE* f = fopen(filename, "w");
-    if (!f) return -1;
+    if (!f) {
+        log_error("Failed to open source file for writing: %s", filename);
+        return TRIX_ERROR_FILE_WRITE;
+    }
 
     char timestamp[64];
     get_timestamp(timestamp, sizeof(timestamp));
@@ -410,56 +464,78 @@ int generate_makefile(const SoftChipSpec* spec, const CodegenOptions* opts,
 
 /* Main code generation function */
 int codegen_generate(const SoftChipSpec* spec, const CodegenOptions* opts) {
+    trix_error_context_t ctx_body;
+    trix_error_context_t* ctx = &ctx_body;
+    trix_error_init(ctx);
+    trix_log_init();
+    
+    int validation = validate_codegen_inputs(spec, opts, ctx);
+    if (validation != TRIX_OK) {
+        log_error("codegen_generate: Validation failed");
+        return validation;
+    }
+    
+    log_info("Starting code generation for '%s' (target: %s)", 
+             spec->name, target_name(opts->target));
+    
     /* Create output directory */
-    mkdir(opts->output_dir, 0755);
+    if (mkdir(opts->output_dir, 0755) != 0 && errno != EEXIST) {
+        log_warn("Failed to create output directory: %s", opts->output_dir);
+    }
 
     char path[512];
 
     /* Generate header */
     snprintf(path, sizeof(path), "%s/%s.h", opts->output_dir, spec->name);
-    if (generate_header_file(spec, opts, path) != 0) {
-        fprintf(stderr, "Error: Failed to generate header\n");
-        return -1;
+    int result = generate_header_file(spec, opts, path);
+    if (result != TRIX_OK) {
+        log_error("Failed to generate header: %s", path);
+        return result;
     }
-    printf("  %s.h\n", spec->name);
+    log_info("  %s.h", spec->name);
 
     /* Generate source */
     snprintf(path, sizeof(path), "%s/%s.c", opts->output_dir, spec->name);
-    if (generate_source_file(spec, opts, path) != 0) {
-        fprintf(stderr, "Error: Failed to generate source\n");
-        return -1;
+    result = generate_source_file(spec, opts, path);
+    if (result != TRIX_OK) {
+        log_error("Failed to generate source: %s", path);
+        return result;
     }
-    printf("  %s.c\n", spec->name);
+    log_info("  %s.c", spec->name);
 
     /* Generate test */
     if (opts->generate_test) {
         snprintf(path, sizeof(path), "%s/%s_test.c", opts->output_dir, spec->name);
-        if (generate_test_file(spec, opts, path) != 0) {
-            fprintf(stderr, "Error: Failed to generate test\n");
-            return -1;
+        result = generate_test_file(spec, opts, path);
+        if (result != TRIX_OK) {
+            log_error("Failed to generate test: %s", path);
+            return result;
         }
-        printf("  %s_test.c\n", spec->name);
+        log_info("  %s_test.c", spec->name);
     }
 
     /* Generate Makefile */
     snprintf(path, sizeof(path), "%s/Makefile", opts->output_dir);
-    if (generate_makefile(spec, opts, path) != 0) {
-        fprintf(stderr, "Error: Failed to generate Makefile\n");
-        return -1;
+    result = generate_makefile(spec, opts, path);
+    if (result != TRIX_OK) {
+        log_error("Failed to generate Makefile: %s", path);
+        return result;
     }
-    printf("  Makefile\n");
+    log_info("  Makefile");
 
     /* Generate linear layers if present */
     if (spec->num_linear_layers > 0) {
         snprintf(path, sizeof(path), "%s/%s_linear.h", opts->output_dir, spec->name);
-        if (generate_linear_layers(spec, opts, path) != 0) {
-            fprintf(stderr, "Error: Failed to generate linear layers\n");
-            return -1;
+        result = generate_linear_layers(spec, opts, path);
+        if (result != TRIX_OK) {
+            log_error("Failed to generate linear layers: %s", path);
+            return result;
         }
-        printf("  %s_linear.h (%d Linear Kingdom layers)\n", spec->name, spec->num_linear_layers);
+        log_info("  %s_linear.h (%d Linear Kingdom layers)", spec->name, spec->num_linear_layers);
     }
 
-    return 0;
+    log_info("Code generation complete for '%s'", spec->name);
+    return TRIX_OK;
 }
 
 /* Generate Linear Kingdom layers using linear_forge */
