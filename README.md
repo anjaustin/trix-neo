@@ -1,6 +1,4 @@
 # TriX - Deterministic AI Runtime
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/anjaustin/trix-neo)
 [![Tests](https://img.shields.io/badge/tests-9%2F9%20passing-success)](https://github.com/anjaustin/trix-neo)
 
@@ -322,12 +320,6 @@ If you use TriX in your research, please cite:
   version={1.0.0}
 }
 ```
-
----
-
-## 📜 License
-
-MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
