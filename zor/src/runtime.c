@@ -22,6 +22,129 @@
 #define STATE_BYTES 64
 
 /*
+ * SIMD Popcount Implementations
+ */
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
+
+/* Function pointer type */
+typedef int (*popcount_fn)(const uint8_t* a, const uint8_t* b);
+
+/* Portable popcount fallback */
+static int popcount64_portable(const uint8_t* a, const uint8_t* b) {
+    if (!a || !b) return 512;
+    
+    int count = 0;
+    for (int i = 0; i < STATE_BYTES; i++) {
+        uint8_t x = a[i] ^ b[i];
+        while (x) {
+            count += x & 1;
+            x >>= 1;
+        }
+    }
+    return count;
+}
+
+/* ARM NEON popcount - uses vcnt (population count) */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+static int popcount64_neon(const uint8_t* a, const uint8_t* b) {
+    if (!a || !b) return 512;
+    
+    /* Load 64 bytes in 4x16 vectors */
+    uint8x16_t a0 = vld1q_u8(a);
+    uint8x16_t a1 = vld1q_u8(a + 16);
+    uint8x16_t a2 = vld1q_u8(a + 32);
+    uint8x16_t a3 = vld1q_u8(a + 48);
+    
+    uint8x16_t b0 = vld1q_u8(b);
+    uint8x16_t b1 = vld1q_u8(b + 16);
+    uint8x16_t b2 = vld1q_u8(b + 32);
+    uint8x16_t b3 = vld1q_u8(b + 48);
+    
+    /* XOR */
+    uint8x16_t x0 = veorq_u8(a0, b0);
+    uint8x16_t x1 = veorq_u8(a1, b1);
+    uint8x16_t x2 = veorq_u8(a2, b2);
+    uint8x16_t x3 = veorq_u8(a3, b3);
+    
+    /* Count bits in each 8-byte lane */
+    uint8x8_t r0 = vcnt_u8(vget_low_u8(x0));
+    uint8x8_t r1 = vcnt_u8(vget_high_u8(x0));
+    uint8x8_t r2 = vcnt_u8(vget_low_u8(x1));
+    uint8x8_t r3 = vcnt_u8(vget_high_u8(x1));
+    uint8x8_t r4 = vcnt_u8(vget_low_u8(x2));
+    uint8x8_t r5 = vcnt_u8(vget_high_u8(x2));
+    uint8x8_t r6 = vcnt_u8(vget_low_u8(x3));
+    uint8x8_t r7 = vcnt_u8(vget_high_u8(x3));
+    
+    /* Pairwise add to reduce */
+    uint8x8_t s01 = vadd_u8(r0, r1);
+    uint8x8_t s23 = vadd_u8(r2, r3);
+    uint8x8_t s45 = vadd_u8(r4, r5);
+    uint8x8_t s67 = vadd_u8(r6, r7);
+    
+    uint8x8_t s0123 = vadd_u8(s01, s23);
+    uint8x8_t s4567 = vadd_u8(s45, s67);
+    
+    uint8x8_t final = vadd_u8(s0123, s4567);
+    
+    /* Horizontal sum */
+    final = vpadd_u8(final, final);
+    final = vpadd_u8(final, final);
+    final = vpadd_u8(final, final);
+    
+    return (int)vget_lane_u8(final, 0);
+}
+#endif /* ARM_NEON */
+
+/* x86 AVX2 popcount */
+#if defined(__AVX2__)
+static int popcount64_avx2(const uint8_t* a, const uint8_t* b) {
+    if (!a || !b) return 512;
+    
+    __m256i va = _mm256_loadu_si256((const __m256i*)a);
+    __m256i vb = _mm256_loadu_si256((const __m256i*)b);
+    __m256i x = _mm256_xor_si256(va, vb);
+    
+    __m256i pop = _mm256_popcnt_u8(x);
+    
+    __m128i sum_lo = _mm256_castsi256_si128(pop);
+    __m128i sum_hi = _mm256_extracti128_si256(pop, 1);
+    __m128i sum = _mm_add_epi8(sum_lo, sum_hi);
+    sum = _mm_sad_epu8(sum, _mm_setzero_si128());
+    
+    return (int)_mm_cvtsi128_si32(sum);
+}
+#endif /* AVX2 */
+
+/* Choose best popcount at runtime */
+static popcount_fn choose_popcount(void) {
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    return popcount64_neon;
+#elif defined(__AVX2__)
+    return popcount64_avx2;
+#else
+    return popcount64_portable;
+#endif
+}
+
+/* Global popcount function */
+static popcount_fn g_popcount = NULL;
+
+static int popcount64(const uint8_t* a, const uint8_t* b) {
+    if (!g_popcount) {
+        g_popcount = choose_popcount();
+    }
+    return g_popcount(a, b);
+}
+
+/*
  * Internal chip structure
  */
 struct trix_chip {
@@ -44,24 +167,9 @@ struct trix_chip {
     int num_linear_layers;
     
     /* Mode */
-    int mode;  /* 0 = first_match, 1 = all_match */
+    int mode;
     char default_label[64];
 };
-
-/* Portable popcount (works everywhere) */
-static int popcount64(const uint8_t* a, const uint8_t* b) {
-    if (!a || !b) return 512;  /* Max distance for NULL input */
-    
-    int count = 0;
-    for (int i = 0; i < STATE_BYTES; i++) {
-        uint8_t x = a[i] ^ b[i];
-        while (x) {
-            count += x & 1;
-            x >>= 1;
-        }
-    }
-    return count;
-}
 
 /*
  * Load chip from .trix specification file
