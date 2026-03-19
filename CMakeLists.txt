@@ -93,6 +93,8 @@ set(TRIX_RUNTIME_SOURCES
     zor/src/validation.c
     zor/src/thread.c
     zor/src/version.c
+    zor/src/runtime.c
+    zor/src/metrics.c
 )
 
 set(TRIX_RUNTIME_HEADERS
@@ -102,6 +104,8 @@ set(TRIX_RUNTIME_HEADERS
     zor/include/trixc/validation.h
     zor/include/trixc/thread.h
     zor/include/trixc/version.h
+    zor/include/trixc/runtime.h
+    zor/include/trixc/metrics.h
 )
 
 # Static library
@@ -201,6 +205,7 @@ if(TRIX_BUILD_TESTS)
     add_trix_test(test_thread zor/test/test_thread.c)
     add_trix_test(test_version zor/test/test_version.c)
     add_trix_test(test_integration zor/test/test_integration.c)
+    add_trix_test(test_runtime zor/test/test_runtime.c)
     
     # Logging demo
     add_executable(test_logging_demo zor/test/test_logging_demo.c)
