@@ -154,6 +154,7 @@ if(TRIX_BUILD_TOOLS)
         tools/src/softchip.c
         tools/src/codegen.c
         tools/src/linear_forge.c
+        tools/src/trix_run.c
     )
     
     set(TRIX_TOOLS_HEADERS
