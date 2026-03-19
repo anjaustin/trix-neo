@@ -1,20 +1,76 @@
 # Build artifacts
 build/
+dist/
+*.egg-info/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+Makefile
+CTestTestfile.cmake
 *.o
-*.so
 *.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Editor files
 *.swp
+*.swo
 *~
 .vscode/
 .idea/
+.project
+.cproject
+.settings/
 
 # OS files
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Testing
+*.log
+coverage/
+*.gcda
+*.gcno
+*.gcov
+coverage.info
+coverage_report/
+Testing/
+test-results/
+*.dSYM/
+
+# Temporary files
+*.tmp
+*.bak
+output/
+bin/
+
+# Project-specific temp files
+build-error.txt
+err.txt
+output.txt
+do-this.txt
