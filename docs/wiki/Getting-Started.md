@@ -83,90 +83,118 @@ inference:
   default: unknown
 ```
 
-### Step 2: Generate C Code
+### Step 2: Generate C Code (Alternative Approach)
 
 ```bash
 ./trix gesture.trix --target=c
 ```
 
-This generates files in the `output/` directory:
-- `gesture_recognizer.h` - Header file
-- `gesture_recognizer.c` - Implementation
-- `gesture_recognizer_test.c` - Test harness
-- `Makefile` - Build system
+This generates self-contained C code in the `output/` directory.
 
-### Step 3: Compile and Run
-
-```bash
-cd output
-make
-./gesture_recognizer_test
-```
-
-Expected output:
-```
-╭──────────────────────────────────────────────────────────────╮
-│  Soft Chip Test: gesture_recognizer                          │
-╰──────────────────────────────────────────────────────────────╯
-
-Signature Validation:
-─────────────────────
-  ✓ thumbs_up: PASS (distance=0)
-  ✓ thumbs_down: PASS (distance=0)
-  ✓ open_palm: PASS (distance=0)
-
-Results: 3 passed, 0 failed
-```
-
-## Using Generated Code
-
-The TriX toolchain generates self-contained C code that you integrate into your project.
-
-### Header Usage
+### Step 3: Use the Runtime Library (Recommended)
 
 ```c
-#include "gesture_recognizer.h"
+#include <trixc/runtime.h>
+#include <stdio.h>
 
-// Use the generated chip
-void recognize_gesture(const uint8_t input[64]) {
-    // Call the generated inference function
-    int match = gesture_recognizer_match(input);
-    
-    if (match >= 0) {
-        const char* labels[] = {"thumbs_up", "thumbs_down", "open_palm"};
-        printf("Recognized: %s\n", labels[match]);
-    } else {
-        printf("No match\n");
+int main() {
+    // Load the chip
+    int error = 0;
+    trix_chip_t* chip = trix_load("gesture.trix", &error);
+    if (!chip) {
+        fprintf(stderr, "Failed to load chip: %d\n", error);
+        return 1;
     }
+    
+    // Get chip info
+    const trix_chip_info_t* info = trix_info(chip);
+    printf("Loaded: %s v%s (%d signatures)\n", 
+           info->name, info->version, info->num_signatures);
+    
+    // Run inference
+    uint8_t input[64] = {0x00, 0x01, 0x02, /* ... 64 bytes ... */};
+    trix_result_t result = trix_infer(chip, input);
+    
+    if (result.match >= 0) {
+        printf("Recognized: %s (distance: %d)\n", 
+               result.label, result.distance);
+    } else {
+        printf("No match (distance: %d)\n", result.distance);
+    }
+    
+    // Cleanup
+    trix_chip_free(chip);
+    return 0;
 }
 ```
 
-### Generated API
-
-The code generator creates:
-
-| Function | Description |
-|----------|-------------|
-| `chip_match(input)` | Returns signature index or -1 |
-| `chip_distance(input)` | Returns Hamming distance to best match |
-| `chip_get_label(index)` | Returns human-readable label |
-| `chip_get_threshold(index)` | Returns threshold for signature |
-
-### Configuration
-
-Edit the generated `Makefile` to adjust optimization levels:
-
-```makefile
-CFLAGS = -O3 -march=native -ffast-math
+Compile and run:
+```bash
+gcc -o myapp myapp.c -I/path/to/trix/zor/include -L/path/to/trix/build -ltrix_runtime -lm
+./myapp
 ```
 
-## Performance Benchmarks
+## Runtime API
 
-| Platform | Throughput | Notes |
-|----------|------------|-------|
-| Apple M4 | 235 GOP/s | NEON I8MM optimized |
-| Intel x86 | 45 GOP/s | AVX2 optimized |
-| ARM64 generic | 178 GOP/s | NEON SDOT |
+### Loading Chips
+
+```c
+// Load from .trix spec file
+trix_chip_t* chip = trix_load("chip.trix", &error);
+
+// Get chip metadata
+const trix_chip_info_t* info = trix_info(chip);
+printf("Name: %s\n", info->name);
+printf("Signatures: %d\n", info->num_signatures);
+printf("State bits: %d\n", info->state_bits);
+
+// Get memory footprint
+size_t footprint = trix_memory_footprint(chip);
+```
+
+### Running Inference
+
+```c
+// Single inference (first match)
+uint8_t input[64] = {/* your 64-byte input */};
+trix_result_t result = trix_infer(chip, input);
+
+if (result.match >= 0) {
+    printf("Match: %s (index=%d, distance=%d)\n", 
+           result.label, result.match, result.distance);
+} else {
+    printf("No match\n");
+}
+
+// Get all matching signatures
+trix_result_t matches[10];
+int num = trix_infer_all(chip, input, matches, 10);
+for (int i = 0; i < num; i++) {
+    printf("  %s: distance=%d\n", matches[i].label, matches[i].distance);
+}
+```
+
+### Querying Signatures
+
+```c
+// Get label for signature index
+const char* label = trix_label(chip, 0);
+
+// Get threshold
+int threshold = trix_threshold(chip, 0);
+
+// Get signature pattern (read-only)
+const uint8_t* pattern = trix_signature(chip, 0);
+
+// Get shape type
+int shape = trix_shape(chip, 0);  // 0=xor, 1=and, etc.
+```
+
+### Cleanup
+
+```c
+trix_chip_free(chip);  // Safe to call with NULL
+```
 
 ## Build Targets
 
@@ -188,17 +216,19 @@ Uses ARM NEON SDOT instructions for 16x speedup.
 ```
 Intel/AMD with AVX2.
 
-### WebAssembly
-```bash
-./trix spec.trix --target=wasm
-```
-For browser/edge deployment.
+## Performance Benchmarks
+
+| Platform | Throughput | Notes |
+|----------|------------|-------|
+| Apple M4 | 235 GOP/s | NEON I8MM optimized |
+| Intel x86 | 45 GOP/s | AVX2 optimized |
+| ARM64 generic | 178 GOP/s | NEON SDOT |
 
 ## Next Steps
 
 - [Architecture Overview](Architecture.md) - Understand TriX's design
 - [Toolchain Guide](Toolchain.md) - Deep dive into the code generator
-- [API Reference](API-Reference.md) - Toolchain API documentation
+- [API Reference](API-Reference.md) - Full API documentation
 - [Security](Security.md) - Security model
 
 ## Common Issues
