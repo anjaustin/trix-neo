@@ -2,6 +2,7 @@
  * runtime.c — TriX Runtime Engine
  *
  * Load and run soft chips.
+ * Uses the toolchain's parser for .trix files.
  *
  * Copyright 2026 TriX Research
  */
@@ -10,6 +11,9 @@
 #include "../include/trixc/errors.h"
 #include "../include/trixc/memory.h"
 #include "../include/trixc/logging.h"
+
+#include "../../tools/include/softchip.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,141 +74,43 @@ trix_chip_t* trix_load(const char* filename, int* error) {
     
     trix_log_init();
     
-    /* Use toolchain to parse the spec */
-    extern int softchip_parse(const char* filename, void* spec);
-    extern int softchip_init(void* spec);
+    /* Parse using the toolchain */
+    SoftChipSpec spec;
+    int parse_result = softchip_parse(filename, &spec);
     
-    /* We need the toolchain to parse - let's use a simpler approach
-     * by parsing the file directly here for now */
-    
-    FILE* f = fopen(filename, "r");
-    if (!f) {
-        if (error) *error = TRIX_ERROR_FILE_NOT_FOUND;
-        log_error("trix_load: Cannot open file '%s'", filename);
+    if (parse_result != TRIX_OK) {
+        if (error) *error = parse_result;
+        log_error("trix_load: Failed to parse '%s' (error=%d)", filename, parse_result);
         return NULL;
     }
     
-    /* Allocate chip */
+    /* Allocate runtime chip */
     trix_chip_t* chip = (trix_chip_t*)calloc(1, sizeof(trix_chip_t));
     if (!chip) {
-        fclose(f);
         if (error) *error = TRIX_ERROR_OUT_OF_MEMORY;
         return NULL;
     }
     
-    /* Set defaults */
-    chip->state_bits = 512;
-    chip->mode = 0;  /* first_match */
-    strcpy(chip->default_label, "unknown");
+    /* Copy metadata */
+    strncpy(chip->name, spec.name, sizeof(chip->name) - 1);
+    strncpy(chip->version, spec.version, sizeof(chip->version) - 1);
+    chip->state_bits = spec.state_bits;
+    chip->num_signatures = spec.num_signatures;
+    chip->num_shapes = spec.num_shapes;
+    chip->num_linear_layers = spec.num_linear_layers;
+    chip->mode = spec.mode;
+    strncpy(chip->default_label, spec.default_label, sizeof(chip->default_label) - 1);
     
-    /* Parse the .trix file */
-    char line[1024];
-    char section[64] = "";
-    int current_sig = -1;
-    
-    while (fgets(line, sizeof(line), f)) {
-        /* Trim whitespace */
-        char* p = line;
-        while (*p == ' ' || *p == '\t') p++;
-        char* end = p + strlen(p) - 1;
-        while (end > p && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
+    /* Copy signatures - THE KEY PART */
+    for (int i = 0; i < spec.num_signatures && i < MAX_SIGNATURES; i++) {
+        memcpy(chip->signatures[i], spec.signatures[i].pattern, STATE_BYTES);
+        chip->thresholds[i] = spec.signatures[i].threshold;
+        chip->shapes[i] = spec.signatures[i].shape_index;
+        strncpy(chip->labels[i], spec.signatures[i].name, sizeof(chip->labels[i]) - 1);
         
-        if (*p == '\0' || *p == '#') continue;
-        
-        /* Section headers */
-        if (strncmp(p, "softchip:", 9) == 0) {
-            strcpy(section, "softchip");
-            continue;
-        }
-        if (strncmp(p, "state:", 6) == 0) {
-            strcpy(section, "state");
-            continue;
-        }
-        if (strncmp(p, "shapes:", 7) == 0) {
-            strcpy(section, "shapes");
-            continue;
-        }
-        if (strncmp(p, "signatures:", 11) == 0) {
-            strcpy(section, "signatures");
-            continue;
-        }
-        if (strncmp(p, "inference:", 10) == 0) {
-            strcpy(section, "inference");
-            continue;
-        }
-        
-        /* Key:value pairs */
-        char* colon = strchr(p, ':');
-        if (!colon) continue;
-        
-        *colon = '\0';
-        char* key = p;
-        char* value = colon + 1;
-        
-        /* Skip leading whitespace in key/value */
-        while (*key == ' ') key++;
-        while (*value == ' ') value++;
-        
-        /* Remove trailing whitespace from key */
-        char* key_end = key + strlen(key) - 1;
-        while (key_end > key && *key_end == ' ') *key_end-- = '\0';
-        
-        /* Parse based on section */
-        if (strcmp(section, "softchip") == 0) {
-            if (strcmp(key, "name") == 0) {
-                strncpy(chip->name, value, sizeof(chip->name) - 1);
-            } else if (strcmp(key, "version") == 0) {
-                strncpy(chip->version, value, sizeof(chip->version) - 1);
-            }
-        } else if (strcmp(section, "state") == 0) {
-            if (strcmp(key, "bits") == 0) {
-                chip->state_bits = atoi(value);
-            }
-        } else if (strcmp(section, "signatures") == 0) {
-            /* Check for new signature (indent <= 2 spaces, not a property) */
-            int indent = 0;
-            const char* lp = line;
-            while (*lp == ' ') { indent++; lp++; }
-            
-            if (indent <= 2 && strcmp(key, "pattern") != 0 &&
-                strcmp(key, "threshold") != 0 && strcmp(key, "shape") != 0) {
-                /* New signature */
-                if (chip->num_signatures < MAX_SIGNATURES) {
-                    current_sig = chip->num_signatures++;
-                    strncpy(chip->labels[current_sig], key, sizeof(chip->labels[current_sig]) - 1);
-                    chip->thresholds[current_sig] = 32;  /* Default */
-                    chip->shapes[current_sig] = 0;       /* Default: xor */
-                }
-            } else if (current_sig >= 0) {
-                if (strcmp(key, "pattern") == 0) {
-                    /* Parse hex pattern */
-                    const char* hex = value;
-                    size_t hex_len = strlen(hex);
-                    for (size_t i = 0; i < STATE_BYTES * 2 && i < hex_len; i += 2) {
-                        char byte_str[3] = {hex[i], hex[i+1], '\0'};
-                        chip->signatures[current_sig][i/2] = (uint8_t)strtol(byte_str, NULL, 16);
-                    }
-                } else if (strcmp(key, "threshold") == 0) {
-                    chip->thresholds[current_sig] = atoi(value);
-                } else if (strcmp(key, "shape") == 0) {
-                    if (strcmp(value, "xor") == 0) chip->shapes[current_sig] = 0;
-                    else if (strcmp(value, "and") == 0) chip->shapes[current_sig] = 1;
-                    else if (strcmp(value, "or") == 0) chip->shapes[current_sig] = 2;
-                    else if (strcmp(value, "sigmoid") == 0) chip->shapes[current_sig] = 8;
-                }
-            }
-        } else if (strcmp(section, "inference") == 0) {
-            if (strcmp(key, "mode") == 0) {
-                if (strcmp(value, "all_match") == 0) {
-                    chip->mode = 1;
-                }
-            } else if (strcmp(key, "default") == 0) {
-                strncpy(chip->default_label, value, sizeof(chip->default_label) - 1);
-            }
-        }
+        log_debug("Loaded signature %d: %s (threshold=%d, shape=%d)", 
+                  i, chip->labels[i], chip->thresholds[i], chip->shapes[i]);
     }
-    
-    fclose(f);
     
     log_info("Loaded chip '%s' with %d signatures", chip->name, chip->num_signatures);
     
@@ -280,8 +186,8 @@ trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
     
     /* Check each signature */
     for (int i = 0; i < chip->num_signatures; i++) {
-        /* Skip uninitialized signatures (threshold 0 means skip) */
-        if (chip->thresholds[i] <= 0) continue;
+        /* Skip if threshold is invalid (negative) but NOT zero */
+        if (chip->thresholds[i] < 0) continue;
         
         int dist = popcount64(input, chip->signatures[i]);
         
