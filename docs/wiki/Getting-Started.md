@@ -89,7 +89,7 @@ inference:
 ./trix gesture.trix --target=c
 ```
 
-This generates:
+This generates files in the `output/` directory:
 - `gesture_recognizer.h` - Header file
 - `gesture_recognizer.c` - Implementation
 - `gesture_recognizer_test.c` - Test harness
@@ -118,30 +118,46 @@ Signature Validation:
 Results: 3 passed, 0 failed
 ```
 
-## Using the C API
+## Using Generated Code
+
+The TriX toolchain generates self-contained C code that you integrate into your project.
+
+### Header Usage
 
 ```c
 #include "gesture_recognizer.h"
-#include <stdio.h>
 
-int main() {
-    // Initialize the chip
-    trix_chip_t* chip = trix_init();
+// Use the generated chip
+void recognize_gesture(const uint8_t input[64]) {
+    // Call the generated inference function
+    int match = gesture_recognizer_match(input);
     
-    // Input pattern (512-bit / 64 bytes)
-    uint8_t input[64] = {0x00, 0x01, 0x02, /* ... */};
-    
-    // Run inference
-    trix_result_t result = trix_infer(chip, input);
-    
-    // Check result
-    printf("Recognized: %s (distance: %d)\n", 
-           result.label, result.distance);
-    
-    // Cleanup
-    trix_free(chip);
-    return 0;
+    if (match >= 0) {
+        const char* labels[] = {"thumbs_up", "thumbs_down", "open_palm"};
+        printf("Recognized: %s\n", labels[match]);
+    } else {
+        printf("No match\n");
+    }
 }
+```
+
+### Generated API
+
+The code generator creates:
+
+| Function | Description |
+|----------|-------------|
+| `chip_match(input)` | Returns signature index or -1 |
+| `chip_distance(input)` | Returns Hamming distance to best match |
+| `chip_get_label(index)` | Returns human-readable label |
+| `chip_get_threshold(index)` | Returns threshold for signature |
+
+### Configuration
+
+Edit the generated `Makefile` to adjust optimization levels:
+
+```makefile
+CFLAGS = -O3 -march=native -ffast-math
 ```
 
 ## Performance Benchmarks
@@ -152,12 +168,38 @@ int main() {
 | Intel x86 | 45 GOP/s | AVX2 optimized |
 | ARM64 generic | 178 GOP/s | NEON SDOT |
 
+## Build Targets
+
+### C (Portable)
+```bash
+./trix spec.trix --target=c
+```
+Works everywhere. Uses portable popcount.
+
+### NEON (ARM)
+```bash
+./trix spec.trix --target=neon
+```
+Uses ARM NEON SDOT instructions for 16x speedup.
+
+### AVX2 (x86)
+```bash
+./trix spec.trix --target=avx2
+```
+Intel/AMD with AVX2.
+
+### WebAssembly
+```bash
+./trix spec.trix --target=wasm
+```
+For browser/edge deployment.
+
 ## Next Steps
 
 - [Architecture Overview](Architecture.md) - Understand TriX's design
 - [Toolchain Guide](Toolchain.md) - Deep dive into the code generator
-- [Deployment Guide](Deployment.md) - Docker and production deployment
-- [API Reference](API-Reference.md) - Complete API documentation
+- [API Reference](API-Reference.md) - Toolchain API documentation
+- [Security](Security.md) - Security model
 
 ## Common Issues
 

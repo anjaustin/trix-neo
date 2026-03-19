@@ -3,105 +3,106 @@
 Complete API documentation for TriX.
 
 ## Table of Contents
-- [Runtime API](#runtime-api)
+- [Runtime Foundation API](#runtime-foundation-api)
 - [Toolchain API](#toolchain-api)
 - [Error Codes](#error-codes)
 - [Logging](#logging)
 
 ---
 
-## Runtime API
+## Runtime Foundation API
 
-The runtime API (`zor/include/trixc/`) provides the core inference functionality.
-
-### Initialization
+The runtime foundation (`zor/include/trixc/`) provides error handling, logging, memory safety, and validation.
 
 ```c
-#include <trixc/runtime.h>
+#include <trixc/errors.h>
+#include <trixc/logging.h>
+#include <trixc/memory.h>
+#include <trixc/validation.h>
 ```
 
-#### `trix_init`
+### Error Handling
 
-Initialize a TriX chip instance.
+#### `trix_error_init`
+
+Initialize an error context.
 
 ```c
-trix_chip_t* trix_init(void);
+trix_error_context_t ctx;
+trix_error_init(&ctx);
 ```
 
-**Returns:** Pointer to initialized chip, or NULL on failure.
+#### `trix_error_set`
 
-**Example:**
+Set an error with context.
+
 ```c
-trix_chip_t* chip = trix_init();
-if (!chip) {
-    fprintf(stderr, "Failed to initialize\n");
-    return 1;
+trix_error_set(&ctx, TRIX_ERROR_FILE_NOT_FOUND, "Cannot open %s", filename);
+```
+
+#### `trix_error_description`
+
+Get human-readable error message.
+
+```c
+const char* msg = trix_error_description(ctx.code);
+printf("Error: %s\n", msg);
+```
+
+### Safe Memory Operations
+
+#### `trix_malloc`
+
+Safe allocation with zero-initialization.
+
+```c
+int* arr = trix_malloc(1024 * sizeof(int), &ctx);
+if (!arr) {
+    // Handle error
 }
 ```
 
-### Inference
+#### `trix_strcpy_safe`
 
-#### `trix_infer`
-
-Run inference on input data.
+Prevent buffer overflows.
 
 ```c
-trix_result_t trix_infer(trix_chip_t* chip, const uint8_t input[64]);
+char dest[64];
+trix_strcpy_safe(dest, source, sizeof(dest));
 ```
 
-**Parameters:**
-- `chip` - Chip instance from `trix_init()`
-- `input` - 64-byte input pattern (512 bits)
+#### `trix_snprintf`
 
-**Returns:** `trix_result_t` with match information.
+Safe formatted output.
 
-**Result structure:**
 ```c
-typedef struct {
-    int match;              // Signature index (-1 = no match)
-    int distance;           // Hamming distance to match
-    int threshold;          // Threshold that was used
-    const char* label;      // Human-readable label
-} trix_result_t;
+char buffer[256];
+trix_snprintf(buffer, sizeof(buffer), "Value: %d", value);
 ```
 
-**Example:**
-```c
-uint8_t input[64] = {0x00, 0x01, 0x02, /* ... */};
-trix_result_t result = trix_infer(chip, input);
+### Validation
 
-if (result.match >= 0) {
-    printf("Recognized: %s (distance: %d)\n", 
-           result.label, result.distance);
-} else {
-    printf("No match (closest: %d)\n", result.distance);
+#### `trix_validate_string`
+
+Validate string input.
+
+```c
+trix_validation_result_t result = trix_validate_string(
+    input, 
+    TRIX_VALIDATE_NON_EMPTY | TRIX_VALIDATE_PRINTABLE
+);
+
+if (result.is_valid) {
+    // Safe to use
 }
 ```
 
-### State Management
+#### `trix_validate_int`
 
-#### `trix_reset`
-
-Reset chip state to initial values.
+Validate integer range.
 
 ```c
-void trix_reset(trix_chip_t* chip);
-```
-
-#### `trix_get_state`
-
-Get current chip state.
-
-```c
-const uint8_t* trix_get_state(const trix_chip_t* chip);
-```
-
-#### `trix_free`
-
-Free chip resources.
-
-```c
-void trix_free(trix_chip_t* chip);
+result = trix_validate_int(value, 0, 512);
 ```
 
 ---
@@ -130,12 +131,32 @@ int softchip_parse(const char* filename, SoftChipSpec* spec);
 
 **Returns:** `TRIX_OK` on success, error code on failure.
 
+**Example:**
+```c
+SoftChipSpec spec;
+int result = softchip_parse("gesture.trix", &spec);
+if (result != TRIX_OK) {
+    fprintf(stderr, "Parse failed: %d\n", result);
+    return 1;
+}
+printf("Loaded chip: %s with %d signatures\n", 
+       spec.name, spec.num_signatures);
+```
+
 #### `softchip_init`
 
 Initialize a spec structure.
 
 ```c
 int softchip_init(SoftChipSpec* spec);
+```
+
+#### `softchip_parse_string`
+
+Parse spec from string content.
+
+```c
+int softchip_parse_string(const char* content, SoftChipSpec* spec);
 ```
 
 ### Code Generation
@@ -149,11 +170,6 @@ int softchip_init(SoftChipSpec* spec);
 Initialize code generation options.
 
 ```c
-int codegen_options_init(CodegenOptions* opts);
-```
-
-**Example:**
-```c
 CodegenOptions opts;
 codegen_options_init(&opts);
 opts.target = TARGET_NEON;
@@ -166,10 +182,19 @@ strcpy(opts.output_dir, "output");
 Generate code from specification.
 
 ```c
-int codegen_generate(const SoftChipSpec* spec, const CodegenOptions* opts);
+int result = codegen_generate(&spec, &opts);
+if (result == TRIX_OK) {
+    printf("Generated: output/%s.c\n", spec.name);
+}
 ```
 
-**Returns:** `TRIX_OK` on success, error code on failure.
+**Targets:**
+- `TARGET_C` - Portable C
+- `TARGET_NEON` - ARM NEON
+- `TARGET_AVX2` - Intel AVX2
+- `TARGET_AVX512` - Intel AVX-512
+- `TARGET_WASM` - WebAssembly
+- `TARGET_VERILOG` - FPGA synthesis
 
 ### Linear Forge
 
@@ -182,8 +207,11 @@ int codegen_generate(const SoftChipSpec* spec, const CodegenOptions* opts);
 Generate linear layer kernel as string.
 
 ```c
-size_t forge_kernel_to_string(const AggregateShapeSpec* spec, 
-                               char* buffer, size_t buffer_size);
+char kernel[65536];
+size_t len = forge_kernel_to_string(&spec, kernel, sizeof(kernel));
+if (len > 0) {
+    printf("Generated %zu bytes of kernel code\n", len);
+}
 ```
 
 ### CfC Forge
@@ -197,7 +225,8 @@ size_t forge_kernel_to_string(const AggregateShapeSpec* spec,
 Generate CfC cell kernel as string.
 
 ```c
-size_t forge_cfc_to_string(const CfCCellSpec* spec, char* buffer, size_t size);
+char cell[131072];
+size_t len = forge_cfc_to_string(&cfccell, cell, sizeof(cell));
 ```
 
 ---
@@ -226,18 +255,13 @@ TRIX_ERROR_FILE_NOT_FOUND = 100
 TRIX_ERROR_FILE_READ = 101
 TRIX_ERROR_FILE_WRITE = 102
 TRIX_ERROR_FILE_PERMISSION = 103
-TRIX_ERROR_INVALID_PATH = 105
 ```
 
 ### Validation (300-399)
 ```c
 TRIX_ERROR_INVALID_SPEC = 300
-TRIX_ERROR_INVALID_NAME = 301
-TRIX_ERROR_INVALID_STATE_BITS = 304
-TRIX_ERROR_INVALID_SHAPE = 305
-TRIX_ERROR_TOO_MANY_SHAPES = 307
-TRIX_ERROR_INVALID_THRESHOLD = 313
 TRIX_ERROR_INVALID_DIMENSIONS = 318
+TRIX_ERROR_INVALID_THRESHOLD = 313
 ```
 
 ### Memory (500-599)
@@ -245,13 +269,6 @@ TRIX_ERROR_INVALID_DIMENSIONS = 318
 TRIX_ERROR_OUT_OF_MEMORY = 500
 TRIX_ERROR_ALLOCATION_FAILED = 501
 TRIX_ERROR_BUFFER_TOO_SMALL = 502
-```
-
-### Getting Error Descriptions
-
-```c
-const char* trix_error_name(trix_error_t error);
-const char* trix_error_description(trix_error_t error);
 ```
 
 ---
@@ -265,7 +282,7 @@ TriX includes a comprehensive logging system.
 ```c
 #include <trixc/logging.h>
 
-trix_log_init();  // Initialize with defaults
+trix_log_init();
 ```
 
 ### Log Levels
@@ -287,15 +304,6 @@ log_error("Failed to open file: %s", filename);
 log_warn("Non-standard configuration: %d", value);
 log_info("Processing %d items", count);
 log_debug("Variable x = %d", x);
-log_trace("Entering function");
-```
-
-### Exporting Metrics
-
-```c
-char buffer[8192];
-trix_metrics_export_prometheus(buffer, sizeof(buffer));
-// Output for Prometheus scraping
 ```
 
 ---
@@ -306,14 +314,14 @@ trix_metrics_export_prometheus(buffer, sizeof(buffer));
 
 ```c
 typedef struct {
-    char name[MAX_NAME_LEN];
-    char version[16];
-    char description[MAX_DESCRIPTION];
+    char name[MAX_NAME_LEN];      // Chip name
+    char version[16];             // Version string
+    char description[256];        // Description
     
-    int state_bits;
-    StateLayout layout;
+    int state_bits;               // 128, 256, 512, 1024
+    StateLayout layout;           // LAYOUT_CUBE or LAYOUT_FLAT
     
-    ShapeType shapes[MAX_SHAPES];
+    ShapeType shapes[MAX_SHAPES]; // Available shapes
     int num_shapes;
     
     Signature signatures[MAX_SIGNATURES];
@@ -322,7 +330,7 @@ typedef struct {
     LinearLayerSpec linear_layers[MAX_LINEAR_LAYERS];
     int num_linear_layers;
     
-    InferenceMode mode;
+    InferenceMode mode;           // MODE_FIRST_MATCH or MODE_ALL_MATCH
     char default_label[MAX_NAME_LEN];
 } SoftChipSpec;
 ```
@@ -332,27 +340,22 @@ typedef struct {
 ```c
 typedef struct {
     char name[MAX_NAME_LEN];
-    uint8_t pattern[STATE_BYTES];  // 64 bytes
-    int threshold;
-    int shape_index;
+    uint8_t pattern[STATE_BYTES];  // 64 bytes for 512-bit
+    int threshold;                  // Hamming distance threshold
+    int shape_index;                // Shape type index
 } Signature;
 ```
 
-### AggregateShapeSpec
+### CodegenOptions
 
 ```c
 typedef struct {
-    char name[64];
-    int K;  // Input dimension
-    int N;  // Output dimension
-    
-    const void* weights;
-    size_t weights_size;
-    Quantization quant;
-    const float* bias;
-    Activation activation;
-    ForgeStrategy strategy;
-} AggregateShapeSpec;
+    CodegenTarget target;    // Target platform
+    bool generate_test;      // Generate test file
+    bool generate_bench;     // Generate benchmark
+    bool optimize;           // Enable optimizations
+    char output_dir[256];    // Output directory
+} CodegenOptions;
 ```
 
 ---
