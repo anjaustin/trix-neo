@@ -52,6 +52,9 @@ const char* shape_name(ShapeType type) {
 }
 
 ShapeType shape_from_name(const char* name) {
+    if (!name) {
+        return SHAPE_XOR;  /* Default on NULL */
+    }
     for (int i = 0; i < SHAPE_COUNT; i++) {
         if (strcasecmp(name, SHAPE_NAMES[i]) == 0) {
             return (ShapeType)i;
@@ -628,7 +631,7 @@ void softchip_print(const SoftChipSpec* spec) {
     for (int i = 0; i < spec->num_signatures; i++) {
         const Signature* sig = &spec->signatures[i];
         printf("  %s: threshold=%d, shape=%s\n",
-               sig->name, sig->threshold, shape_name(sig->shape_index));
+               sig->name, sig->threshold, shape_name((ShapeType)sig->shape_index));
     }
 
     if (spec->num_linear_layers > 0) {

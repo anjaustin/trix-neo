@@ -219,6 +219,7 @@ if(TRIX_BUILD_TESTS)
     endfunction()
     
     add_toolchain_test(test_toolchain_integration tools/test/test_toolchain_integration.c)
+    add_toolchain_test(test_parser_security tools/test/test_parser_security.c)
     
     # Custom test target to run all tests
     add_custom_target(check
