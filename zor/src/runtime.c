@@ -13,6 +13,7 @@
 #include "../include/trixc/logging.h"
 
 #include "../include/trixc/chip_private.h"
+#include "../include/trixc/linear_runtime.h"
 
 #include "../../tools/include/softchip.h"
 
@@ -356,7 +357,20 @@ trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
         result.label = "error";
         return result;
     }
-    
+
+    /* Apply linear layers if present */
+    uint8_t linear_out[64];
+    const uint8_t *effective_input = input;
+
+    if (chip->num_linear_layers > 0) {
+        int lin_rc = trix_exec_linear(chip, input, linear_out);
+        if (lin_rc != TRIX_OK) {
+            result.label = "error";
+            return result;
+        }
+        effective_input = linear_out;
+    }
+
     if (chip->num_signatures <= 0) {
         result.label = NULL;
         return result;
@@ -370,8 +384,8 @@ trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
     for (int i = 0; i < chip->num_signatures; i++) {
         /* Skip if threshold is invalid (negative) but NOT zero */
         if (chip->thresholds[i] < 0) continue;
-        
-        int dist = popcount64(input, chip->signatures[i]);
+
+        int dist = popcount64(effective_input, chip->signatures[i]);
         
         if (dist <= chip->thresholds[i] && dist < best_distance) {
             best_distance = dist;
@@ -403,9 +417,19 @@ int trix_infer_all(const trix_chip_t* chip, const uint8_t input[64],
     }
     
     int num_matches = 0;
-    
+
+    /* Apply linear layers if present */
+    uint8_t linear_out_all[64];
+    const uint8_t *effective_input = input;
+
+    if (chip->num_linear_layers > 0) {
+        int lin_rc = trix_exec_linear(chip, input, linear_out_all);
+        if (lin_rc != TRIX_OK) return 0;
+        effective_input = linear_out_all;
+    }
+
     for (int i = 0; i < chip->num_signatures && num_matches < max_matches; i++) {
-        int dist = popcount64(input, chip->signatures[i]);
+        int dist = popcount64(effective_input, chip->signatures[i]);
         
         if (dist <= chip->thresholds[i]) {
             matches[num_matches].match = i;

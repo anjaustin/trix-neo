@@ -170,6 +170,61 @@ static int test_exec_linear_no_layers(void) {
     return 0;
 }
 
+/* ── test 5: trix_infer calls linear layers automatically ─────────────────── */
+
+static int test_infer_with_linear_layers(void) {
+    printf("[TEST] infer_with_linear_layers\n");
+
+    /* Same chip as test 3: K=4, N=512, W[0][0]=1 */
+    const char *wfile = "/tmp/test_linear_weights.bin";
+    /* File already created by test 3; recreate to be safe */
+    int8_t *W = calloc(512 * 4, 1);
+    if (!W) return 1;
+    W[0] = 1;
+    FILE *f = fopen(wfile, "wb");
+    if (!f) { free(W); return 1; }
+    fwrite(W, 1, 512 * 4, f);
+    fclose(f);
+    free(W);
+
+    /* .trix with one linear layer + one signature matching expected output */
+    const char *tfile = "/tmp/test_infer_linear.trix";
+    f = fopen(tfile, "w");
+    fprintf(f, "softchip:\n  name: infer_linear\n  version: 1.0.0\n");
+    fprintf(f, "state:\n  bits: 512\n");
+    fprintf(f, "linear:\n  embed:\n");
+    fprintf(f, "    input_dim: 4\n    output_dim: 512\n    weights: %s\n", wfile);
+    fprintf(f, "signatures:\n  match:\n    pattern: ");
+    /* out[0]=0x80, out[1..63]=0x00 */
+    fprintf(f, "80");
+    for (int i = 1; i < 64; i++) fprintf(f, "00");
+    fprintf(f, "\n    threshold: 0\n");
+    fprintf(f, "inference:\n  mode: first_match\n  default: unknown\n");
+    fclose(f);
+
+    int err = 0;
+    trix_chip_t *chip = trix_load(tfile, &err);
+    if (!chip) {
+        fprintf(stderr, "FAIL trix_load error=%d\n", err);
+        return 1;
+    }
+
+    uint8_t input[64] = {1, 0, 0, 0};
+    trix_result_t result = trix_infer(chip, input);
+    trix_chip_free(chip);
+
+    if (result.match != 0) {
+        fprintf(stderr, "FAIL match=%d want 0\n", result.match);
+        return 1;
+    }
+    if (result.distance != 0) {
+        fprintf(stderr, "FAIL distance=%d want 0\n", result.distance);
+        return 1;
+    }
+    printf("  PASS\n");
+    return 0;
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -178,6 +233,7 @@ int main(void) {
     failures += test_sign_binarize();
     failures += test_exec_linear_end_to_end();
     failures += test_exec_linear_no_layers();
+    failures += test_infer_with_linear_layers();
     if (failures == 0) {
         printf("All linear_runtime tests passed.\n");
     } else {
