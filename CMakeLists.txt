@@ -97,6 +97,7 @@ set(TRIX_RUNTIME_SOURCES
     zor/src/metrics.c
     zor/src/hsos.c
     zor/src/hsos_infer.c
+    zor/src/linear_runtime.c
     tools/src/softchip.c
 )
 
@@ -211,6 +212,7 @@ if(TRIX_BUILD_TESTS)
     add_trix_test(test_integration zor/test/test_integration.c)
     add_trix_test(test_runtime zor/test/test_runtime.c)
     add_trix_test(test_hsos_infer zor/test/test_hsos_infer.c)
+    add_trix_test(test_linear_runtime zor/test/test_linear_runtime.c)
 
     # Logging demo
     add_executable(test_logging_demo zor/test/test_logging_demo.c)
@@ -234,7 +236,7 @@ if(TRIX_BUILD_TESTS)
     # Custom test target to run all tests
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_toolchain_integration test_hsos_infer
+        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_toolchain_integration test_hsos_infer test_linear_runtime
         COMMENT "Running all unit tests"
     )
     
