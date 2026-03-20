@@ -326,7 +326,7 @@ static void handle_compute(hsos_node_t *node, const hsos_msg_t *msg) {
     hsos_compute_result_t result;
     memset(&result, 0, sizeof(result));
     result.match    = -1;
-    result.distance = 512;
+    result.distance = INT16_MAX;
 
     if (node->compute_fn && node->frag_len == HSOS_FRAG_BUF_SIZE) {
         node->compute_fn(node->frag_buf, node->frag_len,
