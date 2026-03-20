@@ -128,6 +128,11 @@ trix_result_t hsos_exec_infer(hsos_system_t *sys,
     int n = info->num_signatures;
     if (n <= 0) return no_result;
 
+    /* hsos_compute_result_t.match is int16_t — cap to prevent silent wrap */
+    if (n > INT16_MAX) {
+        n = INT16_MAX;
+    }
+
     uint32_t tick_start = sys->tick;
 
     /* Count active workers */
@@ -136,7 +141,24 @@ trix_result_t hsos_exec_infer(hsos_system_t *sys,
         if (sys->workers[i].state != NODE_OFFLINE &&
             sys->workers[i].state != NODE_HALTED) active++;
     }
-    if (active == 0) return no_result;
+    if (active == 0) {
+        return (trix_result_t){-1, (int)INT16_MAX, 0, NULL, tick_start, tick_start};
+    }
+
+    /* Drain residual messages from worker inboxes before sending new fragments.
+     * Worker inboxes are 15-slot ring buffers; any stale messages from boot
+     * or prior calls would silently displace incoming fragments. */
+    {
+        int drain = 0;
+        while (hsos_step_workers(sys) && drain < 64) drain++;
+    }
+
+    /* Discard any stale OP_COMPUTE_OK (or other) messages left in master's
+     * inbox from a prior timed-out call, before we send new work. */
+    {
+        hsos_msg_t stale;
+        while (hsos_recv(&sys->master, &stale)) { /* discard */ }
+    }
 
     /* Don't create empty shards */
     if (active > n) active = n;

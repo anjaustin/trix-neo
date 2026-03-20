@@ -449,6 +449,13 @@ static bool node_step(hsos_node_t *node) {
 
     /* Fragment reassembly — accumulate before dispatch */
     if (msg.flags & MSG_FLAG_FRAGMENT) {
+        if (node->frag_active) {
+            if (msg.src != node->frag_src || msg.type != node->frag_type) {
+                /* New sender/type arrived mid-reassembly — discard stale buffer */
+                node->frag_len    = 0;
+                node->frag_active = false;
+            }
+        }
         if (!node->frag_active) {
             /* Begin new reassembly */
             node->frag_active = true;
