@@ -315,6 +315,30 @@ static void handle_cswap_ok(hsos_node_t *node, const hsos_msg_t *msg) {
     node->memory[0] = msg->payload[0];
 }
 
+static void handle_compute(hsos_node_t *node, const hsos_msg_t *msg) {
+    hsos_msg_t reply;
+    msg_clear(&reply);
+    reply.type = OP_COMPUTE_OK;
+    reply.dst  = msg->src;
+    reply.seq  = msg->seq;
+    reply.len  = sizeof(hsos_compute_result_t);
+
+    hsos_compute_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.match    = -1;
+    result.distance = 512;
+
+    if (node->compute_fn && node->frag_len == HSOS_FRAG_BUF_SIZE) {
+        node->compute_fn(node->frag_buf, node->frag_len,
+                         node->compute_ctx, &result);
+    } else {
+        node->errors++;
+    }
+
+    memcpy(reply.payload, &result, sizeof(result));
+    hsos_send(node, &reply);
+}
+
 static void handle_domain_ops(hsos_node_t *node, const hsos_msg_t *msg) {
     /* Constraint field domain operations */
     hsos_msg_t reply;
@@ -467,6 +491,8 @@ static bool node_step(hsos_node_t *node) {
         case OP_HALT:       handle_halt(node, &msg); break;
         case OP_CSWAP:      handle_cswap(node, &msg); break;
         case OP_CSWAP_OK:   handle_cswap_ok(node, &msg); break;
+        case OP_COMPUTE:    handle_compute(node, &msg); break;
+        case OP_COMPUTE_OK: /* Collected by bridge via hsos_recv(master) */ break;
         case OP_DOMAIN_GET:
         case OP_DOMAIN_SET:
         case OP_DOMAIN_DELTA:
@@ -710,6 +736,22 @@ bool hsos_step(hsos_system_t *sys) {
     bus_deliver(sys);
 
     /* Update fabric directory */
+    fabric_update_directory(sys);
+    sys->fabric.tick = sys->tick;
+
+    return work_done;
+}
+
+bool hsos_step_workers(hsos_system_t *sys) {
+    bool work_done = false;
+
+    sys->tick++;
+
+    for (int i = 0; i < 8; i++) {
+        work_done |= node_step(&sys->workers[i]);
+    }
+
+    bus_deliver(sys);
     fabric_update_directory(sys);
     sys->fabric.tick = sys->tick;
 

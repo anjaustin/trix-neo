@@ -22,6 +22,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Result struct carried in OP_COMPUTE_OK payload.
+ * Packed to guarantee sizeof == HSOS_PAYLOAD_MAX (10). */
+typedef struct __attribute__((packed)) {
+    int16_t match;      /* Signature index, -1 = no match */
+    int16_t distance;   /* Hamming distance */
+    int16_t threshold;  /* Threshold used */
+    char    label[4];   /* First 3 chars of label + null (see strncpy note) */
+} hsos_compute_result_t;
+
+_Static_assert(sizeof(hsos_compute_result_t) == 10,
+               "hsos_compute_result_t must fit in HSOS_PAYLOAD_MAX");
+
+typedef void (*hsos_compute_fn_t)(const uint8_t *input, uint8_t input_len,
+                                   void *ctx,
+                                   hsos_compute_result_t *out);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * MESSAGE PROTOCOL — 16-byte fixed frames
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -168,6 +184,10 @@ typedef struct {
     uint8_t frag_type;          /* Opcode of message being reassembled */
     bool    frag_active;        /* Reassembly in progress */
 
+    /* Compute callback — set by bridge, called by handle_compute() */
+    hsos_compute_fn_t compute_fn;   /* NULL = no compute capability */
+    void             *compute_ctx;  /* Opaque shard context for compute_fn */
+
     /* Statistics */
     uint32_t msgs_rx;
     uint32_t msgs_tx;
@@ -283,6 +303,10 @@ int hsos_boot(hsos_system_t *sys);
 
 /* Execute one tick, returns true if work was done */
 bool hsos_step(hsos_system_t *sys);
+
+/* Execute one tick for workers + bus only — master inbox is NOT drained.
+ * Use during OP_COMPUTE_OK collection so replies remain in master inbox. */
+bool hsos_step_workers(hsos_system_t *sys);
 
 /* Run until quiescent or max_ticks reached */
 int hsos_run(hsos_system_t *sys, int max_ticks);
