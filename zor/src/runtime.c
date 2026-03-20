@@ -300,7 +300,7 @@ void trix_chip_free(trix_chip_t* chip) {
  * Run inference
  */
 trix_result_t trix_infer(const trix_chip_t* chip, const uint8_t input[64]) {
-    trix_result_t result = {-1, 512, 0, NULL};
+    trix_result_t result = {-1, 512, 0, NULL, 0, 0};
     
     if (!chip || !input) {
         result.label = "error";

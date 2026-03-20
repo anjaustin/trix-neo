@@ -30,6 +30,8 @@ typedef struct {
     int distance;           /* Hamming distance to best match */
     int threshold;          /* Threshold used */
     const char* label;      /* Human-readable label (NULL if no match) */
+    uint32_t trace_tick_start; /* HSOS tick when inference began (0 = N/A) */
+    uint32_t trace_tick_end;   /* HSOS tick when result was selected (0 = N/A) */
 } trix_result_t;
 
 /*
