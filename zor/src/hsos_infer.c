@@ -58,6 +58,7 @@ static void hsos_infer_worker_compute(const uint8_t *input, uint8_t input_len,
             out->threshold = (int16_t)threshold;
 
             const char *lbl = trix_label(shard->chip, i);
+            memset(out->label, 0, sizeof(out->label));
             if (lbl) {
                 strncpy(out->label, lbl, sizeof(out->label) - 1);
             }

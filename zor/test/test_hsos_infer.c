@@ -205,8 +205,11 @@ static int test_trix_infer_zero_ticks(void) {
 
     trix_result_t r = trix_infer(chip, input);
 
-    assert(r.trace_tick_start == 0 && r.trace_tick_end == 0 &&
-           "trix_infer() must leave trace ticks zero (N/A)");
+    if (r.trace_tick_start != 0 || r.trace_tick_end != 0) {
+        fprintf(stderr, "  FAIL: trix_infer() must leave trace ticks zero (N/A)\n");
+        trix_chip_free(chip);
+        return 1;
+    }
     printf("  ✓ trace_tick_start=%u trace_tick_end=%u\n",
            r.trace_tick_start, r.trace_tick_end);
 
