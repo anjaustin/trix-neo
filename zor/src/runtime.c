@@ -362,6 +362,8 @@ int trix_infer_all(const trix_chip_t* chip, const uint8_t input[64],
             matches[num_matches].distance = dist;
             matches[num_matches].threshold = chip->thresholds[i];
             matches[num_matches].label = chip->labels[i];
+            matches[num_matches].trace_tick_start = 0;
+            matches[num_matches].trace_tick_end   = 0;
             num_matches++;
         }
     }

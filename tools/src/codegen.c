@@ -149,6 +149,8 @@ int generate_header_file(const SoftChipSpec* spec, const CodegenOptions* opts,
     fprintf(f, "    int distance;       /* Hamming distance to match */\n");
     fprintf(f, "    int threshold;      /* Threshold that was used */\n");
     fprintf(f, "    const char* label;  /* Human-readable label */\n");
+    fprintf(f, "    uint32_t trace_tick_start; /* HSOS tick when inference began (0 = N/A) */\n");
+    fprintf(f, "    uint32_t trace_tick_end;   /* HSOS tick when result was selected (0 = N/A) */\n");
     fprintf(f, "} trix_result_t;\n\n");
 
     fprintf(f, "/* API */\n");
