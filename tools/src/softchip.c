@@ -451,55 +451,52 @@ int softchip_parse_string(const char* content, SoftChipSpec* spec) {
     const char* ptr = content;
     while (ptr && *ptr) {
         /* Get next line */
-        size_t line_len = strcspn(ptr, "\n");
+        size_t raw_len = strcspn(ptr, "\n");
+        size_t line_len = raw_len;
         if (line_len >= sizeof(line)) {
             line_len = sizeof(line) - 1;
         }
         memcpy(line, ptr, line_len);
         line[line_len] = '\0';
-        
+
+        /* Advance past this line (and the newline if present) */
+        size_t advance = raw_len + (ptr[raw_len] == '\n' ? 1 : 0);
+
         char* p = trim(line);
-        
+
         if (*p == '\0' || *p == '#') {
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
-        
+
         if (strncmp(p, "softchip:", 9) == 0) {
             trix_strcpy_safe(section, "softchip", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         if (strncmp(p, "state:", 6) == 0) {
             trix_strcpy_safe(section, "state", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         if (strncmp(p, "shapes:", 7) == 0) {
             trix_strcpy_safe(section, "shapes", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         if (strncmp(p, "signatures:", 11) == 0) {
             trix_strcpy_safe(section, "signatures", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         if (strncmp(p, "inference:", 10) == 0) {
             trix_strcpy_safe(section, "inference", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         if (strncmp(p, "linear:", 7) == 0) {
             trix_strcpy_safe(section, "linear", sizeof(section));
-            ptr += line_len + 1;
-            if (*ptr == '\n') ptr++;
+            ptr += advance;
             continue;
         }
         
@@ -606,10 +603,9 @@ int softchip_parse_string(const char* content, SoftChipSpec* spec) {
             }
         }
         
-        ptr += line_len + 1;
-        if (*ptr == '\n') ptr++;
+        ptr += advance;
     }
-    
+
     return TRIX_OK;
 }
 

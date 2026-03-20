@@ -81,7 +81,7 @@ static void print_chip_info(const trix_chip_t* chip) {
         
         printf("  [%d] %-20s threshold=%d  pattern=", i, label ? label : "(null)", threshold);
         print_hex(sig, 8);
-        printf "...\n";
+        printf("...\n");
     }
     printf("\n");
 }
