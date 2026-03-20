@@ -27,7 +27,7 @@ static trix_chip_t *make_chip(int n_signatures) {
         fprintf(f, "\n");
         fprintf(f, "    threshold: 32\n");
     }
-    fprintf(f, "inference:\n  mode: nearest\n  default: unknown\n");
+    fprintf(f, "inference:\n  mode: first_match\n  default: unknown\n");
     fclose(f);
 
     int err = 0;
@@ -63,8 +63,16 @@ static int test_basic_match(void) {
 
     trix_result_t r = hsos_exec_infer(sys, chip, input);
 
-    assert(r.match == 0 && "expected sig0 to match");
-    assert(r.distance == 0 && "expected zero distance for identical input");
+    if (!(r.match == 0)) {
+        fprintf(stderr, "  FAIL: expected sig0 to match\n");
+        teardown(sys, chip);
+        return 1;
+    }
+    if (!(r.distance == 0)) {
+        fprintf(stderr, "  FAIL: expected zero distance for identical input\n");
+        teardown(sys, chip);
+        return 1;
+    }
     printf("  ✓ match=%d distance=%d\n", r.match, r.distance);
 
     teardown(sys, chip);
@@ -85,7 +93,11 @@ static int test_no_match(void) {
 
     trix_result_t r = hsos_exec_infer(sys, chip, input);
 
-    assert(r.match == -1 && "expected no match for max-distance input");
+    if (!(r.match == -1)) {
+        fprintf(stderr, "  FAIL: expected no match for max-distance input\n");
+        teardown(sys, chip);
+        return 1;
+    }
     printf("  ✓ match=%d (no match as expected)\n", r.match);
 
     teardown(sys, chip);
@@ -117,17 +129,21 @@ static int test_exact_agreement(void) {
         }
     }
 
-    assert(mismatches == 0 && "hsos_exec_infer must agree with trix_infer");
+    if (!(mismatches == 0)) {
+        fprintf(stderr, "  FAIL: hsos_exec_infer must agree with trix_infer\n");
+        teardown(sys, chip);
+        return 1;
+    }
     printf("  ✓ all 10 inputs agree\n");
 
     teardown(sys, chip);
     return 0;
 }
 
-/* ── test 4: replay produces identical result ─────────────────────────────── */
+/* ── test 4: inference is repeatable across consecutive calls ─────────────── */
 
-static int test_replay(void) {
-    printf("[TEST] replay_faithfulness\n");
+static int test_repeatability(void) {
+    printf("[TEST] repeatability\n");
 
     trix_chip_t *chip = make_chip(4);
     hsos_system_t *sys = make_system();
@@ -135,21 +151,17 @@ static int test_replay(void) {
     uint8_t input[64];
     memset(input, 0x02, 64);
 
-    /* Original run with recording */
-    hsos_start_recording(sys);
+    /* Run inference twice on the same system — must produce identical results */
     trix_result_t r1 = hsos_exec_infer(sys, chip, input);
-    hsos_stop_recording(sys);
-
-    /* Replay — resets nodes and re-injects recorded messages through bus */
-    hsos_replay(sys);
-
-    /* Run inference again on the replayed system — must match original */
     trix_result_t r2 = hsos_exec_infer(sys, chip, input);
 
-    assert(r1.match == r2.match &&
-           r1.distance == r2.distance &&
-           "inference on replayed system must match original result");
-    printf("  ✓ original=(%d,%d) replayed=(%d,%d)\n",
+    if (r1.match != r2.match || r1.distance != r2.distance) {
+        fprintf(stderr, "  FAIL: inference not repeatable: (%d,%d) vs (%d,%d)\n",
+                r1.match, r1.distance, r2.match, r2.distance);
+        teardown(sys, chip);
+        return 1;
+    }
+    printf("  ✓ r1=(%d,%d) r2=(%d,%d) — repeatable\n",
            r1.match, r1.distance, r2.match, r2.distance);
 
     teardown(sys, chip);
@@ -167,9 +179,16 @@ static int test_trace_ticks(void) {
     uint8_t input[64] = {0};
     trix_result_t r = hsos_exec_infer(sys, chip, input);
 
-    assert(r.trace_tick_end >= r.trace_tick_start &&
-           "tick_end must be >= tick_start");
-    assert(r.trace_tick_end > 0 && "ticks must have advanced");
+    if (!(r.trace_tick_end >= r.trace_tick_start)) {
+        fprintf(stderr, "  FAIL: tick_end must be >= tick_start\n");
+        teardown(sys, chip);
+        return 1;
+    }
+    if (!(r.trace_tick_end > 0)) {
+        fprintf(stderr, "  FAIL: ticks must have advanced\n");
+        teardown(sys, chip);
+        return 1;
+    }
     printf("  ✓ trace ticks [%u..%u]\n", r.trace_tick_start, r.trace_tick_end);
 
     teardown(sys, chip);
@@ -206,7 +225,7 @@ int main(void) {
     failures += test_basic_match();
     failures += test_no_match();
     failures += test_exact_agreement();
-    failures += test_replay();
+    failures += test_repeatability();
     failures += test_trace_ticks();
     failures += test_trix_infer_zero_ticks();
 

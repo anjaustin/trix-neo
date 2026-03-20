@@ -250,7 +250,7 @@ if(TRIX_BUILD_TESTS)
                 COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info
                 COMMAND ${GENHTML_PATH} coverage.info --output-directory coverage_report
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-                DEPENDS test_errors test_memory test_validation test_thread test_version test_integration
+                DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_hsos_infer
                 COMMENT "Generating code coverage report"
             )
             message(STATUS "Code coverage report target 'coverage' available")
