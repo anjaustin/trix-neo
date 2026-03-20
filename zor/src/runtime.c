@@ -75,33 +75,28 @@ static int popcount64_neon(const uint8_t* a, const uint8_t* b) {
     uint8x16_t x2 = veorq_u8(a2, b2);
     uint8x16_t x3 = veorq_u8(a3, b3);
     
-    /* Count bits in each 8-byte lane */
-    uint8x8_t r0 = vcnt_u8(vget_low_u8(x0));
-    uint8x8_t r1 = vcnt_u8(vget_high_u8(x0));
-    uint8x8_t r2 = vcnt_u8(vget_low_u8(x1));
-    uint8x8_t r3 = vcnt_u8(vget_high_u8(x1));
-    uint8x8_t r4 = vcnt_u8(vget_low_u8(x2));
-    uint8x8_t r5 = vcnt_u8(vget_high_u8(x2));
-    uint8x8_t r6 = vcnt_u8(vget_low_u8(x3));
-    uint8x8_t r7 = vcnt_u8(vget_high_u8(x3));
-    
-    /* Pairwise add to reduce */
-    uint8x8_t s01 = vadd_u8(r0, r1);
-    uint8x8_t s23 = vadd_u8(r2, r3);
-    uint8x8_t s45 = vadd_u8(r4, r5);
-    uint8x8_t s67 = vadd_u8(r6, r7);
-    
-    uint8x8_t s0123 = vadd_u8(s01, s23);
-    uint8x8_t s4567 = vadd_u8(s45, s67);
-    
-    uint8x8_t final = vadd_u8(s0123, s4567);
-    
-    /* Horizontal sum */
-    final = vpadd_u8(final, final);
-    final = vpadd_u8(final, final);
-    final = vpadd_u8(final, final);
-    
-    return (int)vget_lane_u8(final, 0);
+    /* Count bits in each byte using vcntq (16-byte variant) */
+    uint8x16_t c0 = vcntq_u8(x0);
+    uint8x16_t c1 = vcntq_u8(x1);
+    uint8x16_t c2 = vcntq_u8(x2);
+    uint8x16_t c3 = vcntq_u8(x3);
+
+    /* Widen to uint16 to avoid uint8 overflow (max total = 512) */
+    uint16x8_t w0 = vpaddlq_u8(c0);   /* pairwise widen-add: u8→u16 */
+    uint16x8_t w1 = vpaddlq_u8(c1);
+    uint16x8_t w2 = vpaddlq_u8(c2);
+    uint16x8_t w3 = vpaddlq_u8(c3);
+
+    /* Reduce uint16 lanes */
+    uint16x8_t s01 = vaddq_u16(w0, w1);
+    uint16x8_t s23 = vaddq_u16(w2, w3);
+    uint16x8_t s0123 = vaddq_u16(s01, s23);
+
+    /* Widen to uint32 and reduce */
+    uint32x4_t d = vpaddlq_u16(s0123);
+    uint64x2_t q = vpaddlq_u32(d);
+
+    return (int)(vgetq_lane_u64(q, 0) + vgetq_lane_u64(q, 1));
 }
 #endif /* ARM_NEON */
 

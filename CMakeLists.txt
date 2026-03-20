@@ -97,6 +97,7 @@ set(TRIX_RUNTIME_SOURCES
     zor/src/metrics.c
     zor/src/hsos.c
     zor/src/hsos_infer.c
+    tools/src/softchip.c
 )
 
 set(TRIX_RUNTIME_HEADERS
