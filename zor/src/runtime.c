@@ -12,14 +12,14 @@
 #include "../include/trixc/memory.h"
 #include "../include/trixc/logging.h"
 
+#include "../include/trixc/chip_private.h"
+
 #include "../../tools/include/softchip.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_SIGNATURES 128
-#define STATE_BYTES 64
 
 /*
  * SIMD Popcount Implementations
@@ -43,7 +43,7 @@ static int popcount64_portable(const uint8_t* a, const uint8_t* b) {
     if (!a || !b) return 512;
     
     int count = 0;
-    for (int i = 0; i < STATE_BYTES; i++) {
+    for (int i = 0; i < CHIP_STATE_BYTES; i++) {
         uint8_t x = a[i] ^ b[i];
         while (x) {
             count += x & 1;
@@ -163,32 +163,6 @@ static int popcount64(const uint8_t* a, const uint8_t* b) {
     return g_popcount(a, b);
 }
 
-/*
- * Internal chip structure
- */
-struct trix_chip {
-    /* Chip metadata */
-    char name[64];
-    char version[16];
-    int state_bits;
-    
-    /* Signatures */
-    uint8_t signatures[MAX_SIGNATURES][STATE_BYTES];
-    int thresholds[MAX_SIGNATURES];
-    int shapes[MAX_SIGNATURES];
-    char labels[MAX_SIGNATURES][64];
-    int num_signatures;
-    
-    /* Shapes */
-    int num_shapes;
-    
-    /* Linear layers */
-    int num_linear_layers;
-    
-    /* Mode */
-    int mode;
-    char default_label[64];
-};
 
 /*
  * Load chip from .trix specification file
@@ -229,8 +203,8 @@ trix_chip_t* trix_load(const char* filename, int* error) {
     strncpy(chip->default_label, spec.default_label, sizeof(chip->default_label) - 1);
     
     /* Copy signatures - THE KEY PART */
-    for (int i = 0; i < spec.num_signatures && i < MAX_SIGNATURES; i++) {
-        memcpy(chip->signatures[i], spec.signatures[i].pattern, STATE_BYTES);
+    for (int i = 0; i < spec.num_signatures && i < CHIP_MAX_SIGNATURES; i++) {
+        memcpy(chip->signatures[i], spec.signatures[i].pattern, CHIP_STATE_BYTES);
         chip->thresholds[i] = spec.signatures[i].threshold;
         chip->shapes[i] = spec.signatures[i].shape_index;
         strncpy(chip->labels[i], spec.signatures[i].name, sizeof(chip->labels[i]) - 1);
@@ -240,7 +214,76 @@ trix_chip_t* trix_load(const char* filename, int* error) {
     }
     
     log_info("Loaded chip '%s' with %d signatures", chip->name, chip->num_signatures);
-    
+
+    /* Load linear layer weights */
+    for (int i = 0; i < spec.num_linear_layers && i < CHIP_MAX_LINEAR_LAYERS; i++) {
+        chip->layer_input_dim[i]  = spec.linear_layers[i].input_dim;
+        chip->layer_output_dim[i] = spec.linear_layers[i].output_dim;
+        chip->layer_weights[i]    = NULL;
+        chip->layer_weights_packed[i] = NULL;
+
+        if (spec.linear_layers[i].weights_file[0] == '\0') {
+            log_debug("Layer %d: no weights file", i);
+            continue;
+        }
+
+        int K = spec.linear_layers[i].input_dim;
+        int N = spec.linear_layers[i].output_dim;
+        size_t weight_bytes = (size_t)N * K;
+
+        FILE *wf = fopen(spec.linear_layers[i].weights_file, "rb");
+        if (!wf) {
+            log_error("trix_load: cannot open weights '%s'",
+                      spec.linear_layers[i].weights_file);
+            trix_chip_free(chip);
+            if (error) *error = TRIX_ERROR_FILE_NOT_FOUND;
+            return NULL;
+        }
+
+        chip->layer_weights[i] = (int8_t*)malloc(weight_bytes);
+        if (!chip->layer_weights[i]) {
+            fclose(wf);
+            trix_chip_free(chip);
+            if (error) *error = TRIX_ERROR_OUT_OF_MEMORY;
+            return NULL;
+        }
+
+        size_t nread = fread(chip->layer_weights[i], 1, weight_bytes, wf);
+        fclose(wf);
+
+        if (nread != weight_bytes) {
+            log_error("trix_load: weights file '%s' too short: got %zu, want %zu",
+                      spec.linear_layers[i].weights_file, nread, weight_bytes);
+            trix_chip_free(chip);
+            if (error) *error = TRIX_ERROR_FILE_READ;
+            return NULL;
+        }
+
+        log_debug("Layer %d: loaded %d×%d weights (%zu bytes)",
+                  i, N, K, weight_bytes);
+    }
+
+    /* Validate constraints on linear layers */
+    if (chip->num_linear_layers > 0) {
+        /* First layer input_dim must fit in the 64-byte input and be 4-byte aligned */
+        if (chip->layer_input_dim[0] > 64 || chip->layer_input_dim[0] % 4 != 0) {
+            log_error("trix_load: layer 0 input_dim=%d must be <=64 and divisible by 4",
+                      chip->layer_input_dim[0]);
+            trix_chip_free(chip);
+            if (error) *error = TRIX_ERROR_INVALID_DIMENSIONS;
+            return NULL;
+        }
+        /* Last layer output_dim must equal state_bits */
+        int last = chip->num_linear_layers - 1;
+        if (chip->layer_output_dim[last] != chip->state_bits) {
+            log_error("trix_load: last linear layer output_dim=%d != state_bits=%d",
+                      chip->layer_output_dim[last], chip->state_bits);
+            trix_chip_free(chip);
+            if (error) *error = TRIX_ERROR_INVALID_DIMENSIONS;
+            return NULL;
+        }
+    }
+
     if (error) *error = TRIX_OK;
     return chip;
 }
@@ -278,17 +321,29 @@ const trix_chip_info_t* trix_info(const trix_chip_t* chip) {
  */
 size_t trix_memory_footprint(const trix_chip_t* chip) {
     if (!chip) return 0;
-    return sizeof(trix_chip_t);
+    size_t total = sizeof(trix_chip_t);
+    for (int i = 0; i < chip->num_linear_layers; i++) {
+        if (chip->layer_weights[i]) {
+            total += (size_t)chip->layer_output_dim[i] * chip->layer_input_dim[i];
+        }
+        if (chip->layer_weights_packed[i]) {
+            total += (size_t)(chip->layer_output_dim[i] / 2) * (chip->layer_input_dim[i] / 8) * 16;
+        }
+    }
+    return total;
 }
 
 /*
  * Free chip
  */
 void trix_chip_free(trix_chip_t* chip) {
-    if (chip) {
-        log_info("Freeing chip '%s'", chip->name);
-        free(chip);
+    if (!chip) return;
+    log_info("Freeing chip '%s'", chip->name);
+    for (int i = 0; i < CHIP_MAX_LINEAR_LAYERS; i++) {
+        free(chip->layer_weights[i]);
+        free(chip->layer_weights_packed[i]);
     }
+    free(chip);
 }
 
 /*
