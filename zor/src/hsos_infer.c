@@ -12,6 +12,10 @@
 #include "../include/trixc/hsos_infer.h"
 #include "../include/trixc/runtime.h"
 
+/* Maximum ticks to wait for all OP_COMPUTE_OK replies.
+ * ~3× worst-case round-trip: 7 frags × 8 workers × burst factor. */
+#define HSOS_INFER_COLLECT_TIMEOUT 500
+
 /* ── shard context ─────────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -78,7 +82,7 @@ static trix_result_t aggregate_replies(hsos_system_t *sys,
     int replies  = 0;
     int timeout  = 0;
 
-    while (replies < active_workers && timeout < 500) {
+    while (replies < active_workers && timeout < HSOS_INFER_COLLECT_TIMEOUT) {
         hsos_step_workers(sys);
         timeout++;
 
@@ -161,7 +165,7 @@ trix_result_t hsos_exec_infer(hsos_system_t *sys,
 
     /* Send OP_COMPUTE to each assigned worker.
      * A 64-byte payload requires 7 fragment messages.  The master outbox
-     * is only HSOS_QUEUE_SIZE (16) slots, so we must flush after each
+     * has only 15 usable slots (HSOS_QUEUE_SIZE - 1), so we must flush after each
      * worker to avoid overflow. */
     for (int i = 0; i < 8; i++) {
         if (!sys->workers[i].compute_fn) continue;
