@@ -181,6 +181,13 @@ if(TRIX_BUILD_TOOLS)
     # Command-line tool
     add_executable(trix tools/src/trix.c)
     target_link_libraries(trix PRIVATE trix_tools TriX::Runtime)
+
+    # Throughput benchmark
+    add_executable(bench_linear tools/test/bench_linear.c)
+    target_link_libraries(bench_linear PRIVATE TriX::Runtime)
+    if(UNIX)
+        target_link_libraries(bench_linear PRIVATE m)
+    endif()
 endif()
 
 #═══════════════════════════════════════════════════════════════════════════
