@@ -141,6 +141,7 @@ typedef enum {
 
 #define HSOS_MEMORY_SIZE    65536   /* 64KB per node */
 #define HSOS_QUEUE_SIZE     16      /* Message queue depth */
+#define HSOS_FRAG_BUF_SIZE  64      /* Max reassembly payload (one input vector) */
 
 typedef struct {
     /* Identity */
@@ -159,6 +160,13 @@ typedef struct {
 
     /* Memory (for constraint field / bubble machine) */
     uint8_t memory[256];        /* Reduced for embedded: 256 bytes */
+
+    /* Fragment reassembly */
+    uint8_t frag_buf[HSOS_FRAG_BUF_SIZE]; /* Accumulated payload */
+    uint8_t frag_len;           /* Bytes accumulated so far */
+    uint8_t frag_src;           /* Source node of in-progress reassembly */
+    uint8_t frag_type;          /* Opcode of message being reassembled */
+    bool    frag_active;        /* Reassembly in progress */
 
     /* Statistics */
     uint32_t msgs_rx;
@@ -251,16 +259,24 @@ typedef struct {
 
     /* Recording state */
     bool recording;
-    hsos_msg_t record_buffer[256];
-    uint16_t record_count;
+    bool replay_mode;           /* Suppress re-recording during replay */
+    hsos_msg_t *record_buffer;  /* Dynamically allocated */
+    uint16_t record_capacity;   /* Allocated capacity */
+    uint16_t record_count;      /* Messages recorded so far */
 } hsos_system_t;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * API — System Control
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Initialize the system */
+/* Initialize the system (default record buffer capacity: 4096 messages) */
 void hsos_init(hsos_system_t *sys);
+
+/* Initialize with a custom record buffer capacity */
+void hsos_init_with_capacity(hsos_system_t *sys, uint16_t record_capacity);
+
+/* Free dynamic resources (record buffer) */
+void hsos_system_free(hsos_system_t *sys);
 
 /* Boot all nodes, returns count of online workers */
 int hsos_boot(hsos_system_t *sys);
@@ -324,6 +340,12 @@ void hsos_send(hsos_node_t *node, hsos_msg_t *msg);
 
 /* Receive message (dequeue from inbox), returns false if empty */
 bool hsos_recv(hsos_node_t *node, hsos_msg_t *msg);
+
+/* Send a large payload (>10 bytes) as a sequence of fragment messages.
+ * Receiver reassembles transparently; handler is called on last fragment
+ * with node->frag_buf populated and node->frag_len set to total length. */
+void hsos_send_fragmented(hsos_node_t *node, uint8_t type, uint8_t dst,
+                          const uint8_t *data, uint8_t len);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * BUBBLE MACHINE — Distributed Sorting

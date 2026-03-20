@@ -10,7 +10,10 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "../include/hsos.h"
+
+#define HSOS_DEFAULT_RECORD_CAP  4096
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * MESSAGE HELPERS
@@ -114,6 +117,31 @@ bool hsos_recv(hsos_node_t *node, hsos_msg_t *msg) {
         return true;
     }
     return false;
+}
+
+void hsos_send_fragmented(hsos_node_t *node, uint8_t type, uint8_t dst,
+                          const uint8_t *data, uint8_t len) {
+    uint8_t offset = 0;
+    while (offset < len) {
+        hsos_msg_t frag;
+        msg_clear(&frag);
+        frag.type = type;
+        frag.dst  = dst;
+
+        uint8_t chunk = len - offset;
+        if (chunk > HSOS_PAYLOAD_MAX) chunk = HSOS_PAYLOAD_MAX;
+
+        memcpy(frag.payload, data + offset, chunk);
+        frag.len = chunk;
+
+        frag.flags = MSG_FLAG_FRAGMENT;
+        if (offset + chunk >= len) {
+            frag.flags |= MSG_FLAG_LAST_FRAG;
+        }
+
+        hsos_send(node, &frag);
+        offset += chunk;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -395,6 +423,39 @@ static bool node_step(hsos_node_t *node) {
 
     node->state = NODE_BUSY;
 
+    /* Fragment reassembly — accumulate before dispatch */
+    if (msg.flags & MSG_FLAG_FRAGMENT) {
+        if (!node->frag_active) {
+            /* Begin new reassembly */
+            node->frag_active = true;
+            node->frag_src    = msg.src;
+            node->frag_type   = msg.type;
+            node->frag_len    = 0;
+        }
+
+        uint8_t space = HSOS_FRAG_BUF_SIZE - node->frag_len;
+        uint8_t chunk = (msg.len < space) ? msg.len : space;
+        memcpy(node->frag_buf + node->frag_len, msg.payload, chunk);
+        node->frag_len += chunk;
+
+        if (!(msg.flags & MSG_FLAG_LAST_FRAG)) {
+            /* More fragments coming — stay idle, wait */
+            node->state = NODE_IDLE;
+            return true;
+        }
+
+        /* Last fragment received — promote to a dispatchable message.
+         * Overwrite msg fields so the dispatch switch below sees a
+         * complete message; handlers read node->frag_buf for payload. */
+        node->frag_active = false;
+        msg.src   = node->frag_src;
+        msg.type  = node->frag_type;
+        msg.len   = node->frag_len;
+        msg.flags = 0;
+        /* payload field is intentionally stale here; handlers must use
+         * node->frag_buf when processing fragmented message types. */
+    }
+
     /* Dispatch by message type */
     switch (msg.type) {
         case OP_PING:       handle_ping(node, &msg); break;
@@ -469,8 +530,9 @@ static void bus_deliver(hsos_system_t *sys) {
             }
         }
 
-        /* Record if recording */
-        if (sys->recording && sys->record_count < 256) {
+        /* Record if recording, but not during replay */
+        if (sys->recording && !sys->replay_mode &&
+                sys->record_count < sys->record_capacity) {
             sys->record_buffer[sys->record_count++] = msg;
         }
     }
@@ -486,7 +548,8 @@ static void bus_deliver(hsos_system_t *sys) {
                 sys->bus_dropped++;
             }
 
-            if (sys->recording && sys->record_count < 256) {
+            if (sys->recording && !sys->replay_mode &&
+                    sys->record_count < sys->record_capacity) {
                 sys->record_buffer[sys->record_count++] = msg;
             }
         }
@@ -554,7 +617,7 @@ static uint8_t fabric_route_least_loaded(hsos_system_t *sys) {
  * SYSTEM API
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-void hsos_init(hsos_system_t *sys) {
+void hsos_init_with_capacity(hsos_system_t *sys, uint16_t record_capacity) {
     memset(sys, 0, sizeof(hsos_system_t));
 
     /* Initialize master */
@@ -570,8 +633,27 @@ void hsos_init(hsos_system_t *sys) {
     sys->fabric.heartbeat_interval = 256;
     sys->fabric.heartbeat_timeout = 1024;
 
+    /* Allocate record buffer */
+    sys->record_capacity = record_capacity;
+    sys->record_buffer = (hsos_msg_t *)calloc(record_capacity,
+                                               sizeof(hsos_msg_t));
+    /* record_buffer may be NULL if capacity is 0 or alloc fails;
+     * recording will be silently disabled in that case */
+
     sys->booted = false;
     sys->tick = 0;
+}
+
+void hsos_init(hsos_system_t *sys) {
+    hsos_init_with_capacity(sys, HSOS_DEFAULT_RECORD_CAP);
+}
+
+void hsos_system_free(hsos_system_t *sys) {
+    if (sys && sys->record_buffer) {
+        free(sys->record_buffer);
+        sys->record_buffer = NULL;
+        sys->record_capacity = 0;
+    }
 }
 
 int hsos_boot(hsos_system_t *sys) {
@@ -716,16 +798,24 @@ void hsos_replay(hsos_system_t *sys) {
     }
     hsos_run(sys, 20);
 
-    /* Replay recorded messages */
-    for (uint16_t i = 0; i < sys->record_count; i++) {
+    /* Replay recorded messages through the bus so routing, counters, and
+     * any bus-level logic execute identically to the original run.
+     * replay_mode suppresses re-recording of the replayed messages. */
+    sys->replay_mode = true;
+    uint16_t count = sys->record_count;
+
+    for (uint16_t i = 0; i < count; i++) {
         hsos_msg_t *msg = &sys->record_buffer[i];
-        hsos_node_t *dst = get_node(sys, msg->dst);
-        if (dst) {
-            inbox_enqueue(dst, msg);
+        hsos_node_t *src = get_node(sys, msg->src);
+        if (src) {
+            outbox_enqueue(src, msg);
         }
+        /* Step once per message to preserve original delivery ordering */
+        hsos_step(sys);
     }
 
     hsos_run(sys, 1000);
+    sys->replay_mode = false;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
