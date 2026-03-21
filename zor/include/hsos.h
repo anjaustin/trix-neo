@@ -19,8 +19,17 @@
 #ifndef HSOS_H
 #define HSOS_H
 
+/* Compile-time switch: define HSOS_PARALLEL=0 to disable thread pool */
+#ifndef HSOS_PARALLEL
+#define HSOS_PARALLEL 1
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
+
+#if HSOS_PARALLEL
+#include <pthread.h>
+#endif
 
 /* Result struct carried in OP_COMPUTE_OK payload.
  * Packed to guarantee sizeof == HSOS_PAYLOAD_MAX (10). */
@@ -257,7 +266,7 @@ typedef struct {
     uint8_t extra[2];
 } hsos_trace_entry_t;
 
-typedef struct {
+typedef struct hsos_system_t {
     /* Nodes */
     hsos_node_t master;
     hsos_node_t workers[8];
@@ -283,6 +292,23 @@ typedef struct {
     hsos_msg_t *record_buffer;  /* Dynamically allocated */
     uint16_t record_capacity;   /* Allocated capacity */
     uint16_t record_count;      /* Messages recorded so far */
+
+#if HSOS_PARALLEL
+    /* Thread pool for parallel worker steps. */
+    pthread_t        worker_threads[8];
+    /* Per-worker arg struct avoids unsafe pointer-packing */
+    struct hsos_worker_arg {
+        struct hsos_system_t *sys;
+        int            widx;
+        bool           step_done;   /* node_step() return value from this worker */
+    }                worker_args[8];
+    pthread_mutex_t  worker_mutex;
+    pthread_cond_t   worker_start_cond;
+    pthread_cond_t   worker_done_cond;
+    int              worker_pending;     /* # workers not yet done this tick */
+    int              worker_shutdown;    /* Set to 1 to stop threads */
+    hsos_node_t     *worker_target[8];  /* NULL = idle */
+#endif
 } hsos_system_t;
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -297,6 +323,12 @@ void hsos_init_with_capacity(hsos_system_t *sys, uint16_t record_capacity);
 
 /* Free dynamic resources (record buffer) */
 void hsos_system_free(hsos_system_t *sys);
+
+/* Initialize the parallel worker thread pool (called by hsos_init internally) */
+void hsos_parallel_init(hsos_system_t *sys);
+
+/* Tear down the thread pool (called by hsos_system_free internally) */
+void hsos_parallel_destroy(hsos_system_t *sys);
 
 /* Boot all nodes, returns count of online workers */
 int hsos_boot(hsos_system_t *sys);
