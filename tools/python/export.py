@@ -21,7 +21,8 @@ def _compute_binary_codes_int8(weight_arrays: list, X: np.ndarray,
     Simulate the C runtime's int8 forward pass to compute binary codes.
 
     Uses int32 dot products with int8 weights (matching SDOT accumulation in C),
-    ReLU between layers, and hard sign at the output. This ensures prototypes
+    clamp_to_int8 between layers (matching C runtime, NOT ReLU), and hard sign
+    at the output. This ensures prototypes
     and thresholds are calibrated against what the C runtime will actually produce.
 
     Args:
