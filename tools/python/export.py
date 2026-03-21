@@ -15,21 +15,34 @@ import numpy as np
 import torch
 
 
-def _compute_binary_codes(model, X: np.ndarray, batch_size: int = 256) -> np.ndarray:
+def _compute_binary_codes_int8(weight_arrays: list, X: np.ndarray,
+                                batch_size: int = 256) -> np.ndarray:
     """
-    Run X through encoder, return {0,1}^512 binary codes as bool array.
-    Uses hard sign (no STE) for inference-time binarization.
-    Shape: [N, 512]
+    Simulate the C runtime's int8 forward pass to compute binary codes.
+
+    Uses int32 dot products with int8 weights (matching SDOT accumulation in C),
+    ReLU between layers, and hard sign at the output. This ensures prototypes
+    and thresholds are calibrated against what the C runtime will actually produce.
+
+    Args:
+        weight_arrays: list of int8 numpy arrays [N, K], one per encoder layer
+        X:             int8 [B, K] input
+        batch_size:    batch size for processing
+
+    Returns:
+        codes: uint8 [B, 512] binary codes
     """
-    model.eval()
     codes = []
-    with torch.no_grad():
-        for i in range(0, len(X), batch_size):
-            x = torch.tensor(X[i:i+batch_size], dtype=torch.float32)
-            z = model.encode(x)                         # [B, 512] float
-            code = (z > 0).numpy().astype(np.uint8)     # {0,1}^512
-            codes.append(code)
-    return np.concatenate(codes, axis=0)  # [N, 512] uint8
+    for i in range(0, len(X), batch_size):
+        x = X[i:i+batch_size].astype(np.int32)          # [B, K]
+        for layer_idx, W in enumerate(weight_arrays):
+            x = x @ W.T.astype(np.int32)                # [B, N] via int32 dot
+            if layer_idx < len(weight_arrays) - 1:
+                # C runtime uses clamp_to_int8 (NOT ReLU) between layers.
+                # This matches linear_runtime.c:clamp_to_int8() exactly.
+                x = np.clip(x, -127, 127).astype(np.int8).astype(np.int32)
+        codes.append((x > 0).astype(np.uint8))
+    return np.concatenate(codes, axis=0)  # [B, 512] uint8
 
 
 def _majority_vote_prototype(codes: np.ndarray) -> np.ndarray:
@@ -111,9 +124,11 @@ def export_chip(model,
         weight_paths.append(os.path.abspath(path))
         print(f"  Wrote {path}: shape={W_int8.shape}, dtype={W_int8.dtype}")
 
-    # 2. Compute binary codes for all training examples
-    print("  Computing binary codes for prototype extraction...")
-    codes = _compute_binary_codes(model, X_train)  # [N, 512]
+    # 2. Compute binary codes using int8-quantized weights (matches C runtime exactly).
+    # Using float weights here would compute codes inconsistent with what the C runtime
+    # produces, causing prototype/threshold mismatch at inference time.
+    print("  Computing binary codes for prototype extraction (int8 simulation)...")
+    codes = _compute_binary_codes_int8(weight_list, X_train)  # [N, 512]
 
     # 3. Compute per-class prototypes and thresholds
     prototypes = {}
