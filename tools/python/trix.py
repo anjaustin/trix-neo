@@ -63,6 +63,8 @@ class _TrixResult(ctypes.Structure):
         ("distance", ctypes.c_int),
         ("threshold", ctypes.c_int),
         ("label", ctypes.c_char_p),
+        ("trace_tick_start", ctypes.c_uint32),
+        ("trace_tick_end", ctypes.c_uint32),
     ]
 
 
@@ -111,12 +113,15 @@ if _lib is not None:
 class Result:
     """Inference result."""
 
-    def __init__(self, match, distance, threshold, label):
+    def __init__(self, match, distance, threshold, label,
+                 trace_tick_start=0, trace_tick_end=0):
         self.match = match
         self.distance = distance
         self.threshold = threshold
         self.label = label
         self.label_bytes = label
+        self.trace_tick_start = trace_tick_start
+        self.trace_tick_end = trace_tick_end
 
     @property
     def is_match(self):
@@ -224,7 +229,8 @@ class Chip:
         result = self._lib.trix_infer(self._chip, input_arr)
 
         label = result.label.decode("utf-8") if result.label else None
-        return Result(result.match, result.distance, result.threshold, label)
+        return Result(result.match, result.distance, result.threshold, label,
+                      result.trace_tick_start, result.trace_tick_end)
 
     def __del__(self):
         if hasattr(self, "_chip") and self._chip and self._lib:
