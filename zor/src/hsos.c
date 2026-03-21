@@ -13,6 +13,10 @@
 #include <stdlib.h>
 #include "../include/hsos.h"
 
+#if HSOS_PARALLEL
+#include <pthread.h>
+#endif
+
 #define HSOS_DEFAULT_RECORD_CAP  4096
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -143,6 +147,117 @@ void hsos_send_fragmented(hsos_node_t *node, uint8_t type, uint8_t dst,
         offset += chunk;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THREAD POOL — Parallel worker tick
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Safety: within a tick, workers only read their own inbox and write their
+ * own outbox. No cross-worker state sharing. Bus delivery (serial) runs
+ * after all workers complete. This makes parallel worker steps safe.
+ */
+
+#if HSOS_PARALLEL
+
+/* Forward declaration — node_step is defined later in this file */
+static bool node_step(hsos_node_t *node);
+
+static void *worker_thread_fn(void *arg) {
+    /* Use the embedded arg struct — no pointer-packing needed */
+    struct hsos_worker_arg *wa = (struct hsos_worker_arg *)arg;
+    hsos_system_t *sys  = wa->sys;
+    int            widx = wa->widx;
+
+    while (1) {
+        /* Wait for work or shutdown signal */
+        pthread_mutex_lock(&sys->worker_mutex);
+        while (sys->worker_target[widx] == NULL && !sys->worker_shutdown) {
+            pthread_cond_wait(&sys->worker_start_cond, &sys->worker_mutex);
+        }
+
+        if (sys->worker_shutdown) {
+            pthread_mutex_unlock(&sys->worker_mutex);
+            return NULL;
+        }
+
+        hsos_node_t *target = sys->worker_target[widx];
+        sys->worker_target[widx] = NULL;  /* Claim the work */
+        pthread_mutex_unlock(&sys->worker_mutex);
+
+        /* Execute node step — no locks needed: inbox/outbox are per-node.
+         * Store the return value so parallel_step_workers() can faithfully
+         * replicate the work_done |= node_step() semantics of the sequential path. */
+        wa->step_done = node_step(target);
+
+        /* Signal completion */
+        pthread_mutex_lock(&sys->worker_mutex);
+        sys->worker_pending--;
+        if (sys->worker_pending == 0) {
+            pthread_cond_signal(&sys->worker_done_cond);
+        }
+        pthread_mutex_unlock(&sys->worker_mutex);
+    }
+}
+
+void hsos_parallel_init(hsos_system_t *sys) {
+    pthread_mutex_init(&sys->worker_mutex, NULL);
+    pthread_cond_init(&sys->worker_start_cond, NULL);
+    pthread_cond_init(&sys->worker_done_cond, NULL);
+    sys->worker_pending = 0;
+    sys->worker_shutdown = 0;
+    memset(sys->worker_target, 0, sizeof(sys->worker_target));
+
+    for (int i = 0; i < 8; i++) {
+        /* Initialize embedded arg struct — no alignment assumption needed */
+        sys->worker_args[i].sys  = sys;
+        sys->worker_args[i].widx = i;
+        pthread_create(&sys->worker_threads[i], NULL, worker_thread_fn,
+                       &sys->worker_args[i]);
+    }
+}
+
+void hsos_parallel_destroy(hsos_system_t *sys) {
+    pthread_mutex_lock(&sys->worker_mutex);
+    sys->worker_shutdown = 1;
+    pthread_cond_broadcast(&sys->worker_start_cond);
+    pthread_mutex_unlock(&sys->worker_mutex);
+
+    for (int i = 0; i < 8; i++) {
+        pthread_join(sys->worker_threads[i], NULL);
+    }
+    pthread_mutex_destroy(&sys->worker_mutex);
+    pthread_cond_destroy(&sys->worker_start_cond);
+    pthread_cond_destroy(&sys->worker_done_cond);
+}
+
+/* Dispatch all 8 workers in parallel, block until all complete.
+ * Returns the OR of all node_step() return values, faithfully replicating the
+ * work_done |= node_step() semantics of the sequential path so hsos_run()
+ * quiescence detection is unaffected by parallelism. */
+static bool parallel_step_workers(hsos_system_t *sys) {
+    pthread_mutex_lock(&sys->worker_mutex);
+    for (int i = 0; i < 8; i++) {
+        sys->worker_args[i].step_done = false;
+        sys->worker_target[i] = &sys->workers[i];
+    }
+    sys->worker_pending = 8;
+    pthread_cond_broadcast(&sys->worker_start_cond);
+    while (sys->worker_pending > 0) {
+        pthread_cond_wait(&sys->worker_done_cond, &sys->worker_mutex);
+    }
+    bool any_work = false;
+    for (int i = 0; i < 8; i++)
+        any_work |= sys->worker_args[i].step_done;
+    pthread_mutex_unlock(&sys->worker_mutex);
+    return any_work;
+}
+
+#else  /* HSOS_PARALLEL == 0 */
+
+void hsos_parallel_init(hsos_system_t *sys) { (void)sys; }
+void hsos_parallel_destroy(hsos_system_t *sys) { (void)sys; }
+
+#endif /* HSOS_PARALLEL */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * NODE KERNEL — ALU Operations
@@ -675,6 +790,10 @@ void hsos_init_with_capacity(hsos_system_t *sys, uint16_t record_capacity) {
 
     sys->booted = false;
     sys->tick = 0;
+
+#if HSOS_PARALLEL
+    hsos_parallel_init(sys);
+#endif
 }
 
 void hsos_init(hsos_system_t *sys) {
@@ -682,6 +801,9 @@ void hsos_init(hsos_system_t *sys) {
 }
 
 void hsos_system_free(hsos_system_t *sys) {
+#if HSOS_PARALLEL
+    hsos_parallel_destroy(sys);
+#endif
     if (sys && sys->record_buffer) {
         free(sys->record_buffer);
         sys->record_buffer = NULL;
@@ -735,9 +857,13 @@ bool hsos_step(hsos_system_t *sys) {
     work_done |= node_step(&sys->master);
 
     /* Step workers */
+#if HSOS_PARALLEL
+    work_done |= parallel_step_workers(sys);
+#else
     for (int i = 0; i < 8; i++) {
         work_done |= node_step(&sys->workers[i]);
     }
+#endif
 
     /* Route messages */
     bus_deliver(sys);
@@ -754,9 +880,13 @@ bool hsos_step_workers(hsos_system_t *sys) {
 
     sys->tick++;
 
+#if HSOS_PARALLEL
+    work_done |= parallel_step_workers(sys);
+#else
     for (int i = 0; i < 8; i++) {
         work_done |= node_step(&sys->workers[i]);
     }
+#endif
 
     bus_deliver(sys);
     fabric_update_directory(sys);
