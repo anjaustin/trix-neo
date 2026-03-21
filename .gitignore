@@ -74,3 +74,4 @@ build-error.txt
 err.txt
 output.txt
 do-this.txt
+.worktrees/
