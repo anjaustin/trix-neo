@@ -219,6 +219,7 @@ if(TRIX_BUILD_TESTS)
     add_trix_test(test_integration zor/test/test_integration.c)
     add_trix_test(test_runtime zor/test/test_runtime.c)
     add_trix_test(test_hsos_infer zor/test/test_hsos_infer.c)
+    add_trix_test(test_parallel_tick zor/test/test_parallel_tick.c)
     add_trix_test(test_linear_runtime zor/test/test_linear_runtime.c)
 
     # Logging demo
@@ -243,7 +244,7 @@ if(TRIX_BUILD_TESTS)
     # Custom test target to run all tests
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_toolchain_integration test_hsos_infer test_linear_runtime
+        DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_toolchain_integration test_hsos_infer test_parallel_tick test_linear_runtime
         COMMENT "Running all unit tests"
     )
     
@@ -260,7 +261,7 @@ if(TRIX_BUILD_TESTS)
                 COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info
                 COMMAND ${GENHTML_PATH} coverage.info --output-directory coverage_report
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-                DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_hsos_infer
+                DEPENDS test_errors test_memory test_validation test_thread test_version test_integration test_hsos_infer test_parallel_tick
                 COMMENT "Generating code coverage report"
             )
             message(STATUS "Code coverage report target 'coverage' available")
