@@ -139,15 +139,35 @@ Pattern format:
 
 #### `linear:` - Linear Layers (Optional)
 
+Adds int8 linear layers that preprocess the raw input before Hamming matching.
+The runtime applies layers sequentially with `clamp_to_int8` between layers and
+sign binarization after the final layer, producing the 512-bit code for matching.
+
 ```yaml
 linear:
-  layer_name:
+  encoder_layer0:
     input_dim: 64
-    output_dim: 32
-    weights: path/to/weights.bin
-    bias: path/to/bias.bin
-    activation: relu
+    output_dim: 256
+    weights: path/to/layer0_weights.bin
+  encoder_layer1:
+    input_dim: 256
+    output_dim: 512
+    weights: path/to/layer1_weights.bin
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input_dim` | int | Input dimension (first layer: must be ≤64 and divisible by 4) |
+| `output_dim` | int | Output dimension (last layer: must equal `state.bits`) |
+| `weights` | string | Path to raw int8 weight file (`int8_t[output_dim * input_dim]`, row-major) |
+
+**Dimension constraints (validated at load time):**
+- First layer `input_dim` must be ≤ 64 and divisible by 4
+- Consecutive layers must match: `layer[i].output_dim == layer[i+1].input_dim`
+- Last layer `output_dim` must equal `state.bits` (typically 512)
+- Weight files are raw `int8_t` arrays in row-major order (`[output_dim, input_dim]`)
+
+Layers are defined as a name-keyed map (not a YAML list). The layer name (e.g., `encoder_layer0`) is used as an identifier.
 
 ## Generated Files
 

@@ -10,6 +10,51 @@ Complete API documentation for TriX.
 
 ---
 
+## Runtime Inference API
+
+The runtime (`zor/include/trixc/runtime.h`) loads `.trix` chip files and runs inference.
+
+### `trix_load`
+
+Load a chip from a `.trix` spec file.
+
+```c
+trix_chip_t *chip = trix_load("chip.trix", &error);
+```
+
+If the chip has `linear:` layers, `trix_load` reads the weight files and validates dimension constraints:
+- First layer `input_dim` must be ≤ 64 and divisible by 4
+- Consecutive layers: `layer[i].output_dim == layer[i+1].input_dim`
+- Last layer `output_dim` must equal `state_bits`
+
+### `trix_infer`
+
+Run inference on a 64-byte input.
+
+```c
+trix_result_t result = trix_infer(chip, input);
+```
+
+**If the chip has linear layers**, `trix_infer` automatically:
+1. Applies each linear layer (int8 MatVec via SDOT/SMMLA)
+2. Clamps activations to `[-127, 127]` between layers
+3. Sign-binarizes the final output (`z > 0 → 1`) into a 512-bit code
+4. Computes Hamming distance against each signature
+
+**If the chip has no linear layers**, the raw 64-byte input is used directly for Hamming matching.
+
+**Result fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `match` | int | Signature index (-1 = no match) |
+| `distance` | int | Hamming distance to best match (512 = no match sentinel) |
+| `threshold` | int | Threshold of matched signature |
+| `label` | char* | Label string (NULL if no match) |
+| `trace_tick_start` | uint32_t | HSOS tick when inference began (0 if not using HSOS) |
+| `trace_tick_end` | uint32_t | HSOS tick when result was selected |
+
+---
+
 ## Runtime Foundation API
 
 The runtime foundation (`zor/include/trixc/`) provides error handling, logging, memory safety, and validation.

@@ -224,6 +224,70 @@ Intel/AMD with AVX2.
 | Intel x86 | 45 GOP/s | AVX2 optimized |
 | ARM64 generic | 178 GOP/s | NEON SDOT |
 
+## Linear Layer Chips (Learned Encoders)
+
+For real-world signals (vibration, audio, sensor data), raw byte patterns rarely land close to a fixed signature. **Linear layers** let you train a neural encoder that maps arbitrary inputs into the 512-bit Hamming space, then match against learned prototypes.
+
+### How It Works
+
+1. **Train** a binary neural network (BNN) encoder in Python (`tools/python/train.py`)
+2. **Export** int8-quantized weights + `.trix` spec with `tools/python/export.py`
+3. **Load** the chip with `trix_load()` — linear layers are applied automatically before Hamming matching
+
+### Example `.trix` with Linear Layers
+
+```yaml
+softchip:
+  name: bearing_fault
+  version: 1.0.0
+state:
+  bits: 512
+linear:
+  encoder_layer0:
+    input_dim: 64
+    output_dim: 256
+    weights: bearing_fault_layer0.bin
+  encoder_layer1:
+    input_dim: 256
+    output_dim: 512
+    weights: bearing_fault_layer1.bin
+signatures:
+  normal:
+    pattern: <128 hex chars>
+    threshold: 35
+  inner_race:
+    pattern: <128 hex chars>
+    threshold: 30
+inference:
+  mode: first_match
+  default: unknown
+```
+
+When `trix_infer()` is called on this chip, the runtime:
+1. Passes the 64-byte input through `encoder_layer0` (int8 MatVec, 64→256)
+2. Clamps activations to `[-127, 127]` (matching training)
+3. Passes through `encoder_layer1` (int8 MatVec, 256→512)
+4. Sign-binarizes the output (z > 0 → 1) into a 512-bit code
+5. Computes Hamming distance against each signature
+
+### Training Pipeline Quick Start
+
+```bash
+# Install dependencies
+pip install -r tools/python/requirements.txt
+
+# Train on synthetic data (4-class demo)
+python3 tools/python/train.py --dataset synthetic --epochs 50 --out-dir chips/
+
+# Train on real data (CWRU bearing dataset)
+python3 tools/python/train.py --dataset cwru --data-dir /path/to/cwru/ --out-dir chips/
+
+# Run end-to-end validation
+TRIX_LIB_PATH=build python3 tools/python/test_pipeline.py
+```
+
+See [Toolchain Guide](Toolchain.md) for the full `linear:` spec format and dimension constraints.
+
 ## Next Steps
 
 - [Architecture Overview](Architecture.md) - Understand TriX's design
