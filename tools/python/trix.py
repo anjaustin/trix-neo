@@ -50,12 +50,13 @@ def _find_lib():
 
 # Load the library
 _lib = None
+_lib_load_error = None
 try:
     _lib_path = _find_lib()
     if _lib_path:
         _lib = ctypes.CDLL(_lib_path)
 except Exception as e:
-    pass
+    _lib_load_error = e
 
 class _TrixResult(ctypes.Structure):
     _fields_ = [
@@ -139,7 +140,10 @@ class Chip:
     def __init__(self, path, lib=_lib):
         self._lib = lib
         if lib is None:
-            raise ImportError("TriX runtime library not found")
+            msg = "TriX runtime library not found"
+            if _lib_load_error:
+                msg += f" (load failed: {_lib_load_error})"
+            raise ImportError(msg)
 
         # Convert path to bytes
         if isinstance(path, str):

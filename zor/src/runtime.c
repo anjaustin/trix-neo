@@ -274,6 +274,17 @@ trix_chip_t* trix_load(const char* filename, int* error) {
             if (error) *error = TRIX_ERROR_INVALID_DIMENSIONS;
             return NULL;
         }
+        /* Consecutive layers must have matching dimensions */
+        for (int i = 0; i < chip->num_linear_layers - 1; i++) {
+            if (chip->layer_output_dim[i] != chip->layer_input_dim[i + 1]) {
+                log_error("trix_load: layer %d output_dim=%d != layer %d input_dim=%d",
+                          i, chip->layer_output_dim[i],
+                          i + 1, chip->layer_input_dim[i + 1]);
+                trix_chip_free(chip);
+                if (error) *error = TRIX_ERROR_INVALID_DIMENSIONS;
+                return NULL;
+            }
+        }
         /* Last layer output_dim must equal state_bits */
         int last = chip->num_linear_layers - 1;
         if (chip->layer_output_dim[last] != chip->state_bits) {

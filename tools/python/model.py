@@ -1,8 +1,9 @@
 """
 model.py — Binary Neural Network encoder for TriX chip training.
 
-Architecture: Linear(K, hidden) → ReLU → Linear(hidden, N) → SignSTE → {0,1}^N
-Training: float weights, STE through sign, classification loss + balance reg.
+Architecture: Linear(K, hidden) → ClampSTE → Linear(hidden, N) → SignSTE → {0,1}^N
+Training: float weights, STE through sign and clamp, classification loss + balance reg.
+Inter-layer activation: ClampSTE matches the C runtime's clamp_to_int8 ([-127, 127]).
 Export: quantize float weights to int8 (clamp to [-127, 127]).
 """
 
@@ -27,6 +28,38 @@ class SignSTE(torch.autograd.Function):
 
 def sign_ste(x):
     return SignSTE.apply(x)
+
+
+class ClampSTE(torch.autograd.Function):
+    """Clamp to [-127, 127] matching C runtime's clamp_to_int8.
+
+    Forward: hard clamp (matches inference behavior exactly).
+    Backward: straight-through estimator (passes gradient through unchanged
+    for values in [-127, 127], zero gradient outside — like hardtanh).
+    """
+
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        return x.clamp(-127, 127)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, = ctx.saved_tensors
+        # Zero gradient where clamped (standard hardtanh-style STE)
+        mask = (x >= -127) & (x <= 127)
+        return grad_output * mask.float()
+
+
+def clamp_ste(x):
+    return ClampSTE.apply(x)
+
+
+class _ClampSTEModule(nn.Module):
+    """nn.Module wrapper for ClampSTE so it works inside nn.Sequential."""
+
+    def forward(self, x):
+        return clamp_ste(x)
 
 
 class BNNEncoder(nn.Module):
@@ -57,7 +90,11 @@ class BNNEncoder(nn.Module):
         layers = []
         in_dim = input_dim
         if hidden_dim > 0:
-            layers += [nn.Linear(in_dim, hidden_dim, bias=False), nn.ReLU()]
+            # Use a lambda wrapper so nn.Sequential can call clamp_ste.
+            # This matches the C runtime's clamp_to_int8 between layers
+            # (NOT ReLU — the C runtime preserves negative values).
+            layers += [nn.Linear(in_dim, hidden_dim, bias=False),
+                       _ClampSTEModule()]
             in_dim = hidden_dim
         layers += [nn.Linear(in_dim, output_dim, bias=False)]
         self.encoder = nn.Sequential(*layers)
