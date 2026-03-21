@@ -188,6 +188,13 @@ if(TRIX_BUILD_TOOLS)
     if(UNIX)
         target_link_libraries(bench_linear PRIVATE m)
     endif()
+
+    # HSOS parallel benchmark
+    add_executable(bench_hsos_parallel tools/test/bench_hsos_parallel.c)
+    target_link_libraries(bench_hsos_parallel PRIVATE TriX::Runtime)
+    if(UNIX)
+        target_link_libraries(bench_hsos_parallel PRIVATE m)
+    endif()
 endif()
 
 #═══════════════════════════════════════════════════════════════════════════
