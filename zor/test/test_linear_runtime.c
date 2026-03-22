@@ -26,7 +26,11 @@ static int test_portable_matvec(void) {
     int8_t x[4] = {1, 2, 3, 4};
     int32_t y[2] = {0};
 
-    linear_matvec_portable(4, 2, x, W, y);
+    int ret = linear_matvec_portable(4, 2, x, W, y);
+    if (ret != 0) {
+        fprintf(stderr, "FAIL portable_matvec: returned %d\n", ret);
+        return 1;
+    }
 
     if (y[0] != 2) {
         fprintf(stderr, "FAIL portable_matvec: y[0]=%d want 2\n", y[0]);

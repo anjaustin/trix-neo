@@ -58,6 +58,7 @@ try:
 except Exception as e:
     _lib_load_error = e
 
+
 class _TrixResult(ctypes.Structure):
     _fields_ = [
         ("match", ctypes.c_int),
@@ -90,9 +91,9 @@ if _lib is not None:
     _lib.trix_infer.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8)]
     _lib.trix_infer.restype = _TrixResult
 
-    # trix_info(chip) -> const trix_chip_info_t*
-    _lib.trix_info.argtypes = [ctypes.c_void_p]
-    _lib.trix_info.restype = ctypes.POINTER(_TrixChipInfo)
+    # trix_info(chip, info) -> int
+    _lib.trix_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(_TrixChipInfo)]
+    _lib.trix_info.restype = ctypes.c_int
 
     # trix_chip_free(chip)
     _lib.trix_chip_free.argtypes = [ctypes.c_void_p]
@@ -114,8 +115,9 @@ if _lib is not None:
 class Result:
     """Inference result."""
 
-    def __init__(self, match, distance, threshold, label,
-                 trace_tick_start=0, trace_tick_end=0):
+    def __init__(
+        self, match, distance, threshold, label, trace_tick_start=0, trace_tick_end=0
+    ):
         self.match = match
         self.distance = distance
         self.threshold = threshold
@@ -156,11 +158,10 @@ class Chip:
             raise RuntimeError(f"Failed to load {path}: error {error.value}")
 
         # Get info
-        info_ptr = lib.trix_info(self._chip)
-        if not info_ptr:
+        info = _TrixChipInfo()
+        if lib.trix_info(self._chip, ctypes.byref(info)) != 0:
             raise RuntimeError("Failed to get chip info")
 
-        info = info_ptr.contents
         self._name = info.name.decode("utf-8") if info.name else ""
         self._version = info.version.decode("utf-8") if info.version else ""
         self._state_bits = info.state_bits
@@ -233,8 +234,14 @@ class Chip:
         result = self._lib.trix_infer(self._chip, input_arr)
 
         label = result.label.decode("utf-8") if result.label else None
-        return Result(result.match, result.distance, result.threshold, label,
-                      result.trace_tick_start, result.trace_tick_end)
+        return Result(
+            result.match,
+            result.distance,
+            result.threshold,
+            label,
+            result.trace_tick_start,
+            result.trace_tick_end,
+        )
 
     def __del__(self):
         if hasattr(self, "_chip") and self._chip and self._lib:

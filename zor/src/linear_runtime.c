@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
@@ -25,7 +26,7 @@
  * Compute y[n] = sum_k( x[k] * W[n*K + k] ) for n in [0, N).
  * W is row-major: row n starts at W + n*K.
  */
-void linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int32_t *y) {
+int linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int32_t *y) {
     for (int n = 0; n < N; n++) {
         int32_t acc = 0;
         const int8_t *row = W + (size_t)n * K;
@@ -34,6 +35,7 @@ void linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int3
         }
         y[n] = acc;
     }
+    return 0;
 }
 
 /* ── SDOT MatVec (ARM64 with __ARM_FEATURE_DOTPROD) ─────────────────────── */
@@ -44,7 +46,7 @@ void linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int3
  * Process K in chunks of 16 int8 (= 4 vdotq lanes × 4 elements).
  * Requires K % 16 == 0; remainder handled portably.
  */
-static void matvec_sdot(int K, int N, const int8_t *x, const int8_t *W, int32_t *y) {
+static int matvec_sdot(int K, int N, const int8_t *x, const int8_t *W, int32_t *y) {
     int K16 = K & ~15;  /* largest multiple of 16 <= K */
 
     for (int n = 0; n < N; n++) {
@@ -66,6 +68,7 @@ static void matvec_sdot(int K, int N, const int8_t *x, const int8_t *W, int32_t 
         }
         y[n] = sum;
     }
+    return 0;
 }
 #endif /* __ARM_FEATURE_DOTPROD */
 
@@ -93,16 +96,14 @@ static void pack_i8mm(int K, int N, const int8_t *src, int8_t *dst) {
     }
 }
 
-static void matvec_smmla(int K, int N, const int8_t *x, const int8_t *W_packed, int32_t *y) {
+static int matvec_smmla(int K, int N, const int8_t *x, const int8_t *W_packed, int32_t *y) {
     int K_blocks = K / 8;
     int N_pairs  = N / 2;
 
     /* Synthesize a second "batch" row of zeros so we can use the 2x8x2 kernel */
-    int8_t *x_zero = calloc(K, 1);
+    int8_t *x_zero = calloc((size_t)K, 1);
     if (!x_zero) {
-        /* Fallback: won't happen in practice for small K, but be safe */
-        linear_matvec_portable(K, N, x, W_packed, y);  /* wrong layout, but safe */
-        return;
+        return TRIX_ERROR_OUT_OF_MEMORY;
     }
 
     for (int np = 0; np < N_pairs; np++) {
@@ -125,6 +126,7 @@ static void matvec_smmla(int K, int N, const int8_t *x, const int8_t *W_packed, 
     }
 
     free(x_zero);
+    return 0;
 }
 #endif /* __ARM_FEATURE_MATMUL_INT8 */
 
@@ -155,7 +157,7 @@ static void clamp_to_int8(const int32_t *in, int8_t *out, int N) {
 
 /* ── Choose matvec implementation ────────────────────────────────────────── */
 
-typedef void (*matvec_fn)(int K, int N, const int8_t *x, const int8_t *W, int32_t *y);
+typedef int (*matvec_fn)(int K, int N, const int8_t *x, const int8_t *W, int32_t *y);
 
 static matvec_fn choose_matvec(void) {
 #if defined(__ARM_FEATURE_MATMUL_INT8)
@@ -173,8 +175,12 @@ int trix_exec_linear(const trix_chip_t *chip, const uint8_t *input, uint8_t out[
     if (!chip || !input || !out) return TRIX_ERROR_NULL_POINTER;
     if (chip->num_linear_layers <= 0) return TRIX_ERROR_NOT_IMPLEMENTED;
 
-    static matvec_fn matvec = NULL;
-    if (!matvec) matvec = choose_matvec();
+    static _Atomic matvec_fn matvec = NULL;
+    matvec_fn local = atomic_load_explicit(&matvec, memory_order_relaxed);
+    if (!local) {
+        local = choose_matvec();
+        atomic_store_explicit(&matvec, local, memory_order_relaxed);
+    }
 
     /* Working buffers: one input int8 buffer + one output int32 buffer */
     int max_N = 0;
@@ -187,6 +193,10 @@ int trix_exec_linear(const trix_chip_t *chip, const uint8_t *input, uint8_t out[
 
     /* First layer input: cast input bytes to int8 */
     int K0 = chip->layer_input_dim[0];
+    if (K0 <= 0) {
+        free(y);
+        return TRIX_ERROR_INVALID_DIMENSIONS;
+    }
     int8_t *cur_input = malloc((size_t)K0);
     if (!cur_input) { free(y); return TRIX_ERROR_OUT_OF_MEMORY; }
     memcpy(cur_input, input, (size_t)K0);  /* uint8 bytes -> int8 (bit-identical cast) */
@@ -197,11 +207,22 @@ int trix_exec_linear(const trix_chip_t *chip, const uint8_t *input, uint8_t out[
         const int8_t *W = chip->layer_weights[i];
 
 #if defined(__ARM_FEATURE_MATMUL_INT8)
+        if (K <= 0 || N <= 0 || K % 8 != 0 || N % 2 != 0) {
+            free(cur_input);
+            free(y);
+            return TRIX_ERROR_INVALID_DIMENSIONS;
+        }
         /* SMMLA needs packed weights; pack on first use */
         if (!chip->layer_weights_packed[i] && W) {
             /* Cast away const: we own the chip's packed buffer. */
             trix_chip_t *mchip = (trix_chip_t *)(uintptr_t)chip;
-            mchip->layer_weights_packed[i] = malloc((size_t)(N / 2) * (K / 8) * 16);
+            size_t packed_size = (size_t)(N / 2) * (K / 8) * 16;
+            if (packed_size == 0 || packed_size > SIZE_MAX / 16) {
+                free(cur_input);
+                free(y);
+                return TRIX_ERROR_INVALID_DIMENSIONS;
+            }
+            mchip->layer_weights_packed[i] = malloc(packed_size);
             if (!mchip->layer_weights_packed[i]) {
                 /* Packed weight allocation failed - return OOM. */
                 free(cur_input);
@@ -222,7 +243,12 @@ int trix_exec_linear(const trix_chip_t *chip, const uint8_t *input, uint8_t out[
         }
 
         memset(y, 0, (size_t)N * sizeof(int32_t));
-        matvec(K, N, cur_input, W, y);
+        int matvec_err = matvec(K, N, cur_input, W, y);
+        if (matvec_err != 0) {
+            free(cur_input);
+            free(y);
+            return matvec_err;
+        }
 
         if (i < chip->num_linear_layers - 1) {
             /* Not last layer: clamp to int8 for next layer */

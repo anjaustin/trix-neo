@@ -34,12 +34,14 @@ public:
             throw std::runtime_error("Failed to load chip: " + std::to_string(error));
         }
         
-        // Cache info
-        const trix_chip_info_t* info = trix_info(chip);
-        name = info->name;
-        version = info->version;
-        state_bits = info->state_bits;
-        num_signatures = info->num_signatures;
+        trix_chip_info_t info;
+        if (trix_info(chip, &info) != 0) {
+            throw std::runtime_error("Failed to get chip info");
+        }
+        name = info.name;
+        version = info.version;
+        state_bits = info.state_bits;
+        num_signatures = info.num_signatures;
     }
     
     ~PyTriXChip() {

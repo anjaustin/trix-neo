@@ -10,6 +10,7 @@
  */
 
 #include "../../zor/include/trixc/runtime.h"
+#include "../../zor/include/trixc/errors.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,15 +67,16 @@ static void print_banner(void) {
 }
 
 static void print_chip_info(const trix_chip_t* chip) {
-    const trix_chip_info_t* info = trix_info(chip);
+    trix_chip_info_t info;
+    if (trix_info(chip, &info) != TRIX_OK) return;
     
-    printf("Chip: %s v%s\n", info->name, info->version);
-    printf("  State bits: %d\n", info->state_bits);
-    printf("  Signatures: %d\n", info->num_signatures);
+    printf("Chip: %s v%s\n", info.name, info.version);
+    printf("  State bits: %d\n", info.state_bits);
+    printf("  Signatures: %d\n", info.num_signatures);
     printf("\n");
     
     printf("Signatures:\n");
-    for (int i = 0; i < info->num_signatures; i++) {
+    for (int i = 0; i < info.num_signatures; i++) {
         const char* label = trix_label(chip, i);
         int threshold = trix_threshold(chip, i);
         const uint8_t* sig = trix_signature(chip, i);

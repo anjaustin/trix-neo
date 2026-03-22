@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security Fixes (2026-03-21)
+
+**Critical P0 Fixes:**
+- Fixed `trix_info()` thread-safety: was returning pointer to static buffer, now uses caller-provided buffer (CVE potential)
+- Fixed `matvec_smmla()` wrong-results fallback: was silently computing garbage on OOM, now returns `TRIX_ERROR_OUT_OF_MEMORY`
+
+**Red Team Fixes:**
+- Fixed integer overflow in packed weight allocation (`linear_runtime.c`)
+- Fixed division by zero in `pack_i8mm()`/`matvec_smmla()` (dimension validation added)
+- Fixed unchecked input dimension validation
+- Fixed static initializer race condition (C11 atomics)
+
 ### Planned
 - Python bindings (trix-python package)
 - CUDA backend for NVIDIA GPUs

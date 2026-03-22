@@ -3,6 +3,7 @@
  */
 
 #include "../include/trixc/runtime.h"
+#include "../include/trixc/errors.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -40,9 +41,14 @@ int main() {
         return 1;
     }
     
-    const trix_chip_info_t* info = trix_info(chip);
-    printf("  ✓ Loaded: %s v%s\n", info->name, info->version);
-    printf("  ✓ Signatures: %d\n", info->num_signatures);
+    trix_chip_info_t info;
+    if (trix_info(chip, &info) != TRIX_OK) {
+        printf("FAIL: Could not get chip info\n");
+        trix_chip_free(chip);
+        return 1;
+    }
+    printf("  ✓ Loaded: %s v%s\n", info.name, info.version);
+    printf("  ✓ Signatures: %d\n", info.num_signatures);
     
     /* Test inference */
     printf("\n[TEST] Testing with zero input...\n");
@@ -73,7 +79,10 @@ int main() {
     printf("\n[TEST] Null safety...\n");
     trix_chip_free(NULL);
     printf("  ✓ trix_chip_free(NULL): OK\n");
-    printf("  ✓ trix_info(NULL): %p\n", (void*)trix_info(NULL));
+    printf("  ✓ trix_info(NULL, NULL): %d\n", trix_info(NULL, NULL));
+    
+    trix_chip_info_t null_info;
+    printf("  ✓ trix_info(NULL, &info): %d\n", trix_info(NULL, &null_info));
     
     /* Cleanup */
     printf("\n[TEST] Cleanup...\n");

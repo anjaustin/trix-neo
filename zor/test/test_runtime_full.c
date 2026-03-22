@@ -3,6 +3,7 @@
  */
 
 #include "../include/trixc/runtime.h"
+#include "../include/trixc/errors.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -43,12 +44,17 @@ int main() {
     }
     
     /* Get info */
-    const trix_chip_info_t* info = trix_info(chip);
-    printf("Loaded: %s v%s\n", info->name, info->version);
-    printf("Signatures: %d\n", info->num_signatures);
+    trix_chip_info_t info;
+    if (trix_info(chip, &info) != TRIX_OK) {
+        printf("FAIL: Could not get chip info\n");
+        trix_chip_free(chip);
+        return 1;
+    }
+    printf("Loaded: %s v%s\n", info.name, info.version);
+    printf("Signatures: %d\n", info.num_signatures);
     
     /* Print signature details */
-    for (int i = 0; i < info->num_signatures; i++) {
+    for (int i = 0; i < info.num_signatures; i++) {
         printf("\nSignature %d:\n", i);
         printf("  label: %s\n", trix_label(chip, i));
         printf("  threshold: %d\n", trix_threshold(chip, i));

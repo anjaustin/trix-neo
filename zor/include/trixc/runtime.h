@@ -75,9 +75,10 @@ trix_chip_t* trix_load_binary(const uint8_t* data, size_t len, int* error);
  * Get chip information.
  *
  * @param chip     Chip handle
- * @return Chip info (do not free)
+ * @param info     Caller-provided info buffer
+ * @return TRIX_OK on success, error code on failure
  */
-const trix_chip_info_t* trix_info(const trix_chip_t* chip);
+int trix_info(const trix_chip_t* chip, trix_chip_info_t* info);
 
 /**
  * Get the memory footprint of a chip.

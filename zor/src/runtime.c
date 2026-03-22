@@ -313,19 +313,17 @@ trix_chip_t* trix_load_binary(const uint8_t* data, size_t len, int* error) {
 /*
  * Get chip information
  */
-const trix_chip_info_t* trix_info(const trix_chip_t* chip) {
-    static trix_chip_info_t info;
+int trix_info(const trix_chip_t* chip, trix_chip_info_t* info) {
+    if (!chip || !info) return TRIX_ERROR_NULL_POINTER;
     
-    if (!chip) return NULL;
+    info->name = chip->name;
+    info->version = chip->version;
+    info->state_bits = chip->state_bits;
+    info->num_signatures = chip->num_signatures;
+    info->num_shapes = chip->num_shapes;
+    info->num_linear_layers = chip->num_linear_layers;
     
-    info.name = chip->name;
-    info.version = chip->version;
-    info.state_bits = chip->state_bits;
-    info.num_signatures = chip->num_signatures;
-    info.num_shapes = chip->num_shapes;
-    info.num_linear_layers = chip->num_linear_layers;
-    
-    return &info;
+    return TRIX_OK;
 }
 
 /*

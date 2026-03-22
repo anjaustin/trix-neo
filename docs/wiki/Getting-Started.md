@@ -107,9 +107,14 @@ int main() {
     }
     
     // Get chip info
-    const trix_chip_info_t* info = trix_info(chip);
+    trix_chip_info_t info;
+    if (trix_info(chip, &info) != TRIX_OK) {
+        fprintf(stderr, "Failed to get chip info\n");
+        trix_chip_free(chip);
+        return 1;
+    }
     printf("Loaded: %s v%s (%d signatures)\n", 
-           info->name, info->version, info->num_signatures);
+           info.name, info.version, info.num_signatures);
     
     // Run inference
     uint8_t input[64] = {0x00, 0x01, 0x02, /* ... 64 bytes ... */};
@@ -143,10 +148,15 @@ gcc -o myapp myapp.c -I/path/to/trix/zor/include -L/path/to/trix/build -ltrix_ru
 trix_chip_t* chip = trix_load("chip.trix", &error);
 
 // Get chip metadata
-const trix_chip_info_t* info = trix_info(chip);
-printf("Name: %s\n", info->name);
-printf("Signatures: %d\n", info->num_signatures);
-printf("State bits: %d\n", info->state_bits);
+trix_chip_info_t info;
+if (trix_info(chip, &info) != TRIX_OK) {
+    fprintf(stderr, "Failed to get chip info\n");
+    trix_chip_free(chip);
+    return 1;
+}
+printf("Name: %s\n", info.name);
+printf("Signatures: %d\n", info.num_signatures);
+printf("State bits: %d\n", info.state_bits);
 
 // Get memory footprint
 size_t footprint = trix_memory_footprint(chip);

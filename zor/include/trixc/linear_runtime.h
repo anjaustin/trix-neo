@@ -28,7 +28,7 @@ extern "C" {
 int trix_exec_linear(const trix_chip_t *chip, const uint8_t *input, uint8_t out[64]);
 
 /* Exposed for unit testing */
-void linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int32_t *y);
+int linear_matvec_portable(int K, int N, const int8_t *x, const int8_t *W, int32_t *y);
 void linear_sign_binarize(const int32_t *z, int N, uint8_t *out);
 
 #ifdef __cplusplus

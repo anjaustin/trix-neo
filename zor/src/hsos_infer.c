@@ -11,6 +11,7 @@
 #include "../include/hsos.h"
 #include "../include/trixc/hsos_infer.h"
 #include "../include/trixc/runtime.h"
+#include "../include/trixc/errors.h"
 
 /* Maximum ticks to wait for all OP_COMPUTE_OK replies.
  * ~3× worst-case round-trip: 7 frags × 8 workers × burst factor. */
@@ -123,9 +124,9 @@ trix_result_t hsos_exec_infer(hsos_system_t *sys,
 
     if (!sys || !chip || !input) return no_result;
 
-    const trix_chip_info_t *info = trix_info(chip);
-    if (!info) return no_result;
-    int n = info->num_signatures;
+    trix_chip_info_t info_buf;
+    if (trix_info(chip, &info_buf) != TRIX_OK) return no_result;
+    int n = info_buf.num_signatures;
     if (n <= 0) return no_result;
 
     /* hsos_compute_result_t.match is int16_t — cap to prevent silent wrap */
